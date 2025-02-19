@@ -1,0 +1,881 @@
+#!/usr/bin/env python3
+"""
+Tracking pipeline for re-identification:
+- Preprocess features from images/labels.
+- Perform forward and reverse tracking using a buffering mechanism.
+- Merge the tracking storages.
+"""
+
+import os
+import math
+import copy
+from collections import OrderedDict, defaultdict
+
+import torch
+import torch.nn.functional as F
+from PIL import Image
+from torch.utils.data import Dataset, DataLoader
+from torchvision import transforms
+from tqdm import tqdm
+
+# Custom modules
+from data_preprocess import create_label_feature_map
+from model import make_model
+import Transforms
+import sys
+
+# Add a custom path for trainer module if needed
+sys.path.append(os.path.abspath("/home/eddy/Desktop/MasterThesis/mainProgram/AICUP_datasets_fine_tune"))
+from trainer import prepare_trainer_and_calculate_threshold
+
+
+# =============================================================================
+# Helper Classes and Functions
+# =============================================================================
+class OrderedDefaultdict(OrderedDict):
+    """
+    An OrderedDict that creates default values for missing keys.
+    """
+    def __init__(self, default_factory=None, *args, **kwargs):
+        if default_factory is not None and not callable(default_factory):
+            raise TypeError("first argument must be callable or None")
+        self.default_factory = default_factory
+        super().__init__(*args, **kwargs)
+
+    def __missing__(self, key):
+        if self.default_factory is None:
+            raise KeyError(key)
+        self[key] = value = self.default_factory()
+        return value
+
+
+def cosine_similarity(tensor1, tensor2):
+    """Wrapper around PyTorch cosine similarity."""
+    return F.cosine_similarity(tensor1, tensor2)
+
+
+def write_buffer_to_disk(buffer):
+    """
+    Write the oldest buffer entry to disk.
+    (Currently commented out file writing details can be enabled as needed.)
+    """
+    buffer_path, buffer_feature_id_list = buffer.popitem(last=False)
+    folder = os.path.basename(os.path.dirname(buffer_path))
+    file_name = os.path.basename(buffer_path)
+    folder_path = os.path.join('/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/labels', folder)
+    file_path = os.path.join(folder_path, file_name)
+    os.makedirs(folder_path, exist_ok=True)
+    with open(file_path, 'w') as f:
+        for _, obj_id, _, _, _, _ in buffer_feature_id_list:
+            f.write(f"{obj_id}\n")
+
+
+def save_buffer_to_storage(buffer, storage):
+    """
+    Flush the oldest buffer entry into the provided storage dictionary.
+    """
+    buffer_path, buffer_feature_id_list = buffer.popitem(last=False)
+    folder = os.path.basename(os.path.dirname(buffer_path))
+    file_name = os.path.basename(buffer_path)
+    folder_path = os.path.join('/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/labels', folder)
+    file_path = os.path.join(folder_path, file_name)
+    for buffer_feature, buffer_id, center_x_ratio, center_y_ratio, _, _ in buffer_feature_id_list:
+        storage[file_path].append((buffer_feature,buffer_id, center_x_ratio, center_y_ratio))
+
+
+def write_storage(merge_storage, storage_forward, storage_reverse,final_multi_camera_storage):
+    """
+    Write all storage dictionaries to disk.
+    The folder name is changed based on label type.
+    """
+    labels_folder = "/home/eddy/Desktop/train/test/labels"
+
+    for storage, label_folder in zip(
+        [merge_storage, storage_forward, storage_reverse,final_multi_camera_storage],
+        ['merge_labels', 'forward_labels', 'reverse_labels','multi_camera_labels']
+    ):
+        for file_path, entries in storage.items():
+
+            parts = file_path.split(os.sep)
+            parts[-3] = label_folder  # Change folder name to match label type
+            folder_path = os.sep.join(parts[:-1])
+            os.makedirs(folder_path, exist_ok=True)
+            final_file_path = os.sep.join(parts)
+
+            with open(final_file_path, 'w') as f:
+                for _,obj_id, _, _ in entries:
+                    f.write(f"{obj_id}\n")
+
+
+
+def update_labels(target_labels_folder, source_labels_folder):
+    # Iterate through each subfolder in target_labels
+    for subfolder in os.listdir(target_labels_folder):
+        target_subfolder_path = os.path.join(target_labels_folder, subfolder)
+        source_subfolder_path = os.path.join(source_labels_folder, subfolder)
+
+        # Check if corresponding subfolder exists in source_labels
+        if not os.path.exists(source_subfolder_path):
+            print(f"Skipping {subfolder}, corresponding folder not found in source labels.")
+            continue
+
+        # Iterate through all text files in target_labels subfolder
+        for txt_file in os.listdir(target_subfolder_path):
+            target_file_path = os.path.join(target_subfolder_path, txt_file)
+            source_file_path = os.path.join(source_subfolder_path, txt_file)
+
+            # Check if the corresponding source labels file exists
+            if not os.path.exists(source_file_path):
+                print(f"Skipping {txt_file} in {subfolder}, corresponding file not found in source labels.")
+                continue
+            
+            # Read the contents of the source labels file
+            with open(source_file_path, "r") as source_file:
+                source_lines = source_file.readlines()
+
+            # Read the contents of the target labels file
+            with open(target_file_path, "r") as target_file:
+                target_lines = target_file.readlines()
+
+            # **Remove 'None\n' lines from source_lines**
+            source_lines = [line for line in source_lines if line.strip() != "None"]
+
+            # If source_lines is now empty, clear the target file and continue
+            if not source_lines:
+                # print(f"File {source_file_path} contains only 'None'. Clearing target file {target_file_path}.")
+                with open(target_file_path, "w") as target_file:
+                    target_file.write("")  # Empty the file
+                continue
+
+            # Ensure target_labels has the same number of lines as source_labels
+            if len(source_lines) != len(target_lines):
+                print(f"Warning: {txt_file} in {subfolder} has a mismatch in line count ({len(source_lines)} vs {len(target_lines)}). Adjusting to minimum available lines.")
+                min_lines = min(len(source_lines), len(target_lines))
+                source_lines = source_lines[:min_lines]
+                target_lines = target_lines[:min_lines]
+
+            # Process each line
+            updated_lines = []
+            for i, source_line in enumerate(source_lines):
+                source_parts = source_line.strip().split()
+                target_value = target_lines[i].strip()  # The value from target_labels
+
+                # Replace the last value in source_parts with the value from target_labels
+                source_parts[-1] = target_value
+
+                # Reconstruct the full line correctly
+                updated_lines.append(" ".join(source_parts))
+
+            # Write the modified content back to target_labels file
+            with open(target_file_path, "w") as target_file:
+                target_file.write("\n".join(updated_lines) + "\n")
+
+            # print(f"Updated: {target_file_path}")
+
+
+def write_id_mapping_to_txt(id_mapping, output_file):
+    """
+    Write the id mapping dictionary to a text file.
+    Format: (time, cam, reverse_buffer_id): forward_buffer_id
+    """
+    with open(output_file, "w") as f:
+        for key, value in id_mapping.items():
+            f.write(f"{key}: {value}\n")
+
+
+def resolve_duplicates(assignments, buffer, threshold, time_range, cam_id, id_counter):
+    """
+    Resolve duplicate IDs in the assignments list.
+    
+    Each assignment is a tuple:
+        (feature, assigned_id, center_x_ratio, center_y_ratio, disp_x, disp_y)
+    
+    Returns:
+        Updated assignments and the current id_counter.
+    """
+    cont = 0
+    while True:
+        cont += 1
+        assigned_id_dict = defaultdict(list)
+        for idx, (_, assigned_id, center_x, center_y, _, _) in enumerate(assignments):
+            assigned_id_dict[assigned_id].append(idx)
+
+        # Find duplicate IDs
+        duplicates = {key: idx_list for key, idx_list in assigned_id_dict.items() if len(idx_list) > 1}
+        if not duplicates:
+            break
+
+        # For each duplicate, decide which assignment to keep
+        for dup_id, indices in duplicates.items():
+            # Get the latest buffer entry (assumed most relevant)
+            _, buffer_feature_list = next(reversed(buffer.items()))
+            keep_index = -1
+            # Use either displacement or similarity to choose best candidate
+            for buffer_feature, buffer_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buffer_feature_list:
+                if buffer_id != dup_id:
+                    continue
+                if buf_disp_x is not None and buf_disp_y is not None:
+                    min_distance = float('inf')
+                    for idx in indices:
+                        predict_x = buf_center_x + buf_disp_x
+                        predict_y = buf_center_y + buf_disp_y
+                        delta_x = assignments[idx][2] - predict_x
+                        delta_y = assignments[idx][3] - predict_y
+                        distance = math.sqrt(delta_x**2 + delta_y**2)
+                        if distance < min_distance:
+                            keep_index = idx
+                            min_distance = distance
+                else:
+                    max_sim = -1
+                    for idx in indices:
+                        sim = cosine_similarity(assignments[idx][0], buffer_feature).squeeze().item()
+                        if sim > max_sim:
+                            keep_index = idx
+                            max_sim = sim
+            if keep_index in duplicates[dup_id]:
+                duplicates[dup_id].remove(keep_index)
+
+        # Reassign new IDs for duplicates (other than the kept index)
+        for dup_id, indices in duplicates.items():
+            _, buffer_feature_list = next(reversed(buffer.items()))
+            for idx in indices:
+                feature, _, center_x, center_y, disp_x, disp_y = assignments[idx]
+                new_id = None
+                sim_matrix = []
+                for buf_feature, buf_id, buf_center_x, buf_center_y, _, _ in buffer_feature_list:
+                    if buf_id == dup_id:
+                        continue
+                    sim = cosine_similarity(feature, buf_feature).squeeze().item()
+                    sim_matrix.append((sim, buf_id, buf_center_x, buf_center_y))
+                sim_matrix.sort(key=lambda x: x[0], reverse=True)
+                if len(sim_matrix) >= cont:
+                    candidate_sim, candidate_id, cand_center_x, cand_center_y = sim_matrix[cont - 1]
+                    if candidate_sim > threshold:
+                        new_id = candidate_id
+                        disp_x = center_x - cand_center_x
+                        disp_y = center_y - cand_center_y
+                if new_id is None:
+                    new_id = id_counter
+                    id_counter += 1
+                assignments[idx] = (feature, new_id, center_x, center_y, disp_x, disp_y)
+    return assignments, id_counter
+
+def merge_storages(storage_forward, storage_reverse):
+    """
+    Merge forward and reverse storages based on coordinate clusters.
+    
+    The function builds clusters from the forward and reverse storages and
+    creates an ID mapping when at least two coordinates match.
+    """
+    merge_storage = copy.deepcopy(storage_forward)
+    forward_cluster = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    reverse_cluster = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
+    # Build clusters for forward storage
+    for file_path, entries in tqdm(storage_forward.items(), desc="Processing forward storage"):
+        parts = file_path.split(os.sep)
+        time_range = parts[-2]
+        cam = parts[-1].split('_')[0]
+        for _,buffer_id, center_x, center_y in entries:
+            forward_cluster[time_range][cam][buffer_id].append((center_x, center_y))
+
+    # Build clusters for reverse storage
+    for file_path, entries in tqdm(storage_reverse.items(), desc="Processing reverse storage"):
+        parts = file_path.split(os.sep)
+        if len(parts) < 2:
+            continue
+        time_range = parts[-2]
+        cam = parts[-1].split('_')[0]
+        for _,buffer_id, center_x, center_y in entries:
+            reverse_cluster[time_range][cam][buffer_id].append((center_x, center_y))
+
+    id_mapping = {}
+    # For each time and camera, match IDs between clusters
+    for time_range in tqdm(forward_cluster, desc="Mapping IDs over times"):
+        for cam in tqdm(forward_cluster[time_range], desc=f"Time {time_range} cameras", leave=False):
+            for r_id, r_coords in reverse_cluster[time_range][cam].items():
+                best_count = 0
+                best_f_id = None
+                for f_id, f_coords in forward_cluster[time_range][cam].items():
+                    count = 0
+                    for (rx, ry) in r_coords:
+                        for (fx, fy) in f_coords:
+                            if rx == fx and ry == fy:
+                                count += 1
+                    if count > best_count:
+                        best_count = count
+                        best_f_id = f_id
+                if best_count >= 2:
+                    id_mapping[(time_range, cam, r_id)] = best_f_id
+
+    write_id_mapping_to_txt(id_mapping, "id_mapping.txt")
+
+    # Update merge_storage using id_mapping
+    for file_path, entries in tqdm(storage_reverse.items(), desc="Updating merge storage"):
+        current_entries = merge_storage[file_path]
+        parts = file_path.split(os.sep)
+        if len(parts) < 2:
+            continue
+        time_range = parts[-2]
+        cam = parts[-1].split('_')[0]
+        for (_,buffer_id, center_x, center_y) in entries:
+            key = (time_range, cam, buffer_id)
+            if key in id_mapping:
+                new_id = id_mapping[key]
+                if any(f_id == new_id and (f_x != center_x or f_y != center_y) for _,f_id, f_x, f_y in current_entries):
+                    id_mapping.pop(key, None)
+                    continue
+                updated_entries = []
+                for feature,f_id, f_x, f_y in current_entries:
+                    if center_x == f_x and center_y == f_y:
+                        updated_entries.append((feature,new_id, f_x, f_y))
+                    else:
+                        updated_entries.append((feature,f_id, f_x, f_y))
+                current_entries = updated_entries
+        merge_storage[file_path] = current_entries
+    return merge_storage
+
+
+def process_label_features(label_to_feature_map, single_thresholds, buffer_size=5, id_counter_start=1):
+    """
+    Process a mapping of labels to feature objects, assigning tracking IDs using a buffer.
+    
+    Args:
+        label_to_feature_map (dict): Mapping of label_path to list of feature objects.
+        single_thresholds (dict): Dictionary of thresholds keyed by time_range and cam_id.
+        buffer_size (int): Maximum number of frames to keep in the buffer.
+        id_counter_start (int): Initial ID to assign.
+        
+    Returns:
+        storage (defaultdict): Storage dictionary with assigned IDs.
+    """
+    storage = defaultdict(list)
+    buffer = OrderedDefaultdict(list)
+    id_counter = id_counter_start
+    old_cam = None
+    first_frame = True
+    old_time_range = None
+
+    for label_path, objects in label_to_feature_map.items():
+        # Extract time_range and camera id from label_path
+        time_range = "_".join(os.path.basename(os.path.dirname(label_path)).split('_')[1:])
+        # time_range = os.path.basename(os.path.dirname(label_path))
+
+        cam_id = os.path.basename(label_path).split('_')[0]
+
+        # Reset buffer if camera changes
+        if old_time_range is None:
+            old_time_range = time_range
+        elif old_time_range != time_range:
+            id_counter = 1
+            old_time_range = time_range
+
+        if old_cam is None:
+            old_cam = cam_id
+        elif old_cam != cam_id:
+            while buffer:
+                save_buffer_to_storage(buffer, storage)
+            # id_counter = 1
+            old_cam = cam_id
+            first_frame = True
+
+        # Flush buffer if size exceeded
+        if len(buffer) > buffer_size:
+            save_buffer_to_storage(buffer, storage)
+
+        # If no objects found, add a dummy entry
+        if objects == [[]]:
+            buffer[label_path].append((None, None, None, None, None, None))
+            continue
+
+        temp_assignments = []
+        for obj in objects:
+            feature = obj["feature"]
+            center_x = obj["center_x_ratio"]
+            center_y = obj["center_y_ratio"]
+            assigned_id = None
+            disp_x = None
+            disp_y = None
+
+            if first_frame:
+                assigned_id = id_counter
+                id_counter += 1
+            else:
+                candidates = []
+                found = False
+                # Iterate over buffered frames in reverse order
+                for _, buf_feature_list in reversed(buffer.items()):
+                    for buf_feature, buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buf_feature_list:
+                        if buf_feature is not None:
+                            sim = cosine_similarity(feature, buf_feature).squeeze()
+                            if sim > single_thresholds[time_range][cam_id]:
+                                # Calculate angles (in radians) for the predicted displacement (buffer) and the actual displacement.
+                                # if buf_disp_x is not None and buf_disp_y is not None:
+                                
+                                #     angle_pred = math.atan2(buf_disp_y, buf_disp_x)
+                                #     angle_actual = math.atan2(center_y - buf_center_y, center_x - buf_center_x)
+                                #     # Compute the absolute difference between the angles.
+                                #     angle_diff = abs(angle_pred - angle_actual)
+                                #     # Normalize the angle difference to be within [0, pi]
+                                #     if angle_diff > math.pi:
+                                #         angle_diff = 2 * math.pi - angle_diff
+
+                                #     # Set an acceptable threshold (e.g., 60 degrees in radians).
+                                #     angle_threshold = math.radians(90)
+                                #     if angle_diff < angle_threshold:
+                                #         # Skip this candidate if the angle difference is too large.
+                                #         found = True
+                                #         candidates.append((buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y))
+                                # else:
+                                found = True
+                                candidates.append((buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y))
+
+                                    
+                    # if previous frame match stop at this frame
+                    if found:
+                        break
+                
+                
+                if candidates:
+                    # if candidates larger than 1 , we use the motion predition method to find out the matching id
+                    if len(candidates) > 1:
+                        min_distance = float("inf")
+                        for cand in candidates:
+                            cand_id, cand_center_x, cand_center_y, cand_disp_x, cand_disp_y = cand
+                            if cand_disp_x is None or cand_disp_y is None:
+                                continue
+                            # Check if the displacement direction is consistent
+                            temp_disp = torch.tensor([center_x - cand_center_x, center_y - cand_center_y], dtype=torch.float32)
+                            buf_disp = torch.tensor([cand_disp_x, cand_disp_y], dtype=torch.float32)
+                            if torch.dot(temp_disp, buf_disp) < 0:
+                                continue
+                            # Calculate angles (in radians) for the predicted displacement (buffer) and the actual displacement.
+                            # angle_pred = math.atan2(cand_disp_y, cand_disp_x)
+                            # angle_actual = math.atan2(center_y - cand_center_y, center_x - cand_center_x)
+
+                            # # Compute the absolute difference between the angles.
+                            # angle_diff = abs(angle_pred - angle_actual)
+                            # # Normalize the angle difference to be within [0, pi]
+                            # if angle_diff > math.pi:
+                            #     angle_diff = 2 * math.pi - angle_diff
+
+                            # # Set an acceptable threshold (e.g., 60 degrees in radians).
+                            # angle_threshold = math.radians(60)
+
+                            # if angle_diff > angle_threshold:
+                            #     continue  # Skip this candidate if the angle difference is too large.
+                            predict_x = cand_center_x + cand_disp_x
+                            predict_y = cand_center_y + cand_disp_y
+                            delta_x = center_x - predict_x
+                            delta_y = center_y - predict_y
+                            distance = math.sqrt(delta_x ** 2 + delta_y ** 2)
+                            if distance < min_distance:
+                                assigned_id = cand_id
+                                min_distance = distance
+                                disp_x = center_x - cand_center_x
+                                disp_y = center_y - cand_center_y
+                    # if we only have one candidate we just assign the matching id
+                    elif len(candidates) == 1:
+                        assigned_id = candidates[0][0]
+                        disp_x = center_x - candidates[0][1]
+                        disp_y = center_y - candidates[0][2]
+
+                # If still not assigned, try to find the closest feature based on displacement , use the motion prediction and lower the 
+                # threshold value to matching
+                if assigned_id is None:
+                    _, buf_feature_list = next(reversed(buffer.items()))
+                    min_distance = float("inf")
+                    close_feature = None
+                    for buf_feature, buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buf_feature_list:
+                        if buf_disp_x is not None and buf_disp_y is not None:
+                            temp_disp = torch.tensor([center_x - buf_center_x, center_y - buf_center_y], dtype=torch.float32)
+                            buf_disp = torch.tensor([buf_disp_x, buf_disp_y], dtype=torch.float32)
+                            # make sure the predivtion motion are align with the new car motion , example if we predit the car would move to 
+                            # right , however the new car appera at the left , this must not be the candidate 
+                            if torch.dot(temp_disp, buf_disp) < 0:
+                                continue
+
+                            # angle_pred = math.atan2(buf_disp_y, buf_disp_x)
+                            # angle_actual = math.atan2(center_y - buf_center_y, center_x - buf_center_x)
+
+                            # # Compute the absolute difference between the angles.
+                            # angle_diff = abs(angle_pred - angle_actual)
+                            # # Normalize the angle difference to be within [0, pi]
+                            # if angle_diff > math.pi:
+                            #     angle_diff = 2 * math.pi - angle_diff
+
+                            # # Set an acceptable threshold (e.g., 60 degrees in radians).
+                            # angle_threshold = math.radians(90)
+
+                            # if angle_diff > angle_threshold:
+                            #     continue  # Skip this candidate if the angle difference is too large.
+
+                            predict_x = buf_center_x + buf_disp_x
+                            predict_y = buf_center_y + buf_disp_y
+                            delta_x = center_x - predict_x
+                            delta_y = center_y - predict_y
+                            distance = math.sqrt(delta_x ** 2 + delta_y ** 2)
+                            # find the most cloest prediction car 
+                            if distance < min_distance:
+                                assigned_id = buf_id
+                                min_distance = distance
+                                disp_x = center_x - buf_center_x
+                                disp_y = center_y - buf_center_y
+                                close_feature = buf_feature
+                    # Check similarity to decide if a new ID is needed
+                    if assigned_id is None:
+                        assigned_id = id_counter
+                        id_counter += 1
+                    else:
+                        sim = cosine_similarity(feature, close_feature).squeeze()
+                        # lower the threshold and compare again
+                        if sim < single_thresholds[time_range][cam_id]/3:
+                            assigned_id = id_counter
+                            id_counter += 1
+
+            temp_assignments.append((feature, assigned_id, center_x, center_y, disp_x, disp_y))
+
+        # Resolve duplicates within the same frame
+        temp_assignments, id_counter = resolve_duplicates(
+            temp_assignments,
+            buffer,
+            single_thresholds[time_range][cam_id],
+            time_range,
+            cam_id,
+            id_counter
+        )
+        first_frame = False
+        buffer[label_path].extend(temp_assignments)
+
+    # Flush remaining buffer entries to storage
+    while buffer:
+        save_buffer_to_storage(buffer, storage)
+    return storage
+
+# def multi_camera_mapping(merge_storage,all_camera_thresholds):
+#     # multi_camera_storage = defaultdict(list)
+#     multi_camera_storage_per_time = defaultdict(lambda: defaultdict(list))
+#     cam_id_cluster_per_time = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+
+#     camera_set_per_time = defaultdict(set)
+#     id_cont_per_time = defaultdict(lambda: 1)
+#     new_id_mapping = defaultdict(dict)
+#     time_set = set()
+
+#     for file_path, entries in tqdm(merge_storage.items(), desc="Processing multi-camera mapping"):
+#         parts = file_path.split(os.sep)
+#         time = parts[-2]  # Extract time
+#         if time not in time_set:
+#             time_set.add(time)
+#         cam = int(parts[-1].split('_')[0])  # Extract camera ID
+
+#         # Ensure each camera is tracked per time
+#         if cam not in camera_set_per_time[time] and cam != 0:
+#             camera_set_per_time[time].add(cam)
+
+#         for feature, id, center_x, center_y in entries:
+#             if cam == 0:
+#                 # Assign new IDs per time
+#                 if id not in new_id_mapping[time]:  
+#                     new_id_mapping[time][id] = id_cont_per_time[time]
+#                     id_cont_per_time[time] += 1
+                
+#                 multi_camera_storage_per_time[time][file_path].append(
+#                     (feature, new_id_mapping[time][id], center_x, center_y)
+#                 )
+#                 cam_id_cluster_per_time[time][cam][new_id_mapping[time][id]].append((feature,file_path))
+#             else:
+#                 cam_id_cluster_per_time[time][cam][id].append((feature,file_path))
+
+
+#     for time in time_set:
+#         camera_set_per_time[time] = sorted(camera_set_per_time[time])
+
+#     for time in time_set:
+#         multi_cam_mapping = {}
+#         for index , cam in enumerate(camera_set_per_time[time]):
+#             for id,entries in cam_id_cluster_per_time[time][cam].items():
+#                 max_similarity = -1
+#                 mapping_id = -1
+#                 for feature,_ in entries:
+#                     for current_cam in range(index+1):
+#                         for current_id,current_entries in cam_id_cluster_per_time[time][current_cam]:
+#                             for current_feature,_ in current_entries:
+#                                 similarity = cosine_similarity(feature,current_feature).squeeze()
+#                                 if similarity>max_similarity:
+#                                     max_similarity = similarity
+#                                     mapping_id = current_id
+#                 if max_similarity>all_camera_thresholds:
+#                     for feature,file_path in entries:
+#                         multi_camera_storage_per_time[time][file_path].append(
+#                         (feature, mapping_id, center_x, center_y))
+#                     revise the cam_id_cluster_per_time[time][cam][id] to cam_id_cluster_per_time[time][cam][imapping_id]
+#                 else:
+#                     for feature,file_path in entries:
+#                         multi_camera_storage_per_time[time][file_path].append(
+#                         (feature, id_cont_per_time[time], center_x, center_y))
+
+#                     revise the cam_id_cluster_per_time[time][cam][id] to cam_id_cluster_per_time[time][cam][id_cont_per_time[time]]
+#                     id_cont_per_time[time]+=1
+                        
+def multi_camera_mapping(merge_storage, all_camera_thresholds):
+    """
+    Merge multi-camera tracking results by mapping IDs across cameras per time.
+    
+    Args:
+        merge_storage (dict): Dictionary with file_path keys and values as lists of tuples 
+                              (feature, id, center_x, center_y).
+        all_camera_thresholds (float): Similarity threshold for mapping IDs across cameras.
+        
+    Returns:
+        final_multi_camera_storage (defaultdict): Nested dict keyed by time and file_path with 
+                                                    tuples (feature, mapping_id, center_x, center_y).
+    """
+    from collections import defaultdict
+    from tqdm import tqdm
+    import torch.nn.functional as F
+
+    # Initialize data structures:
+    # multi_camera_storage: {time: {file_path: [(feature, mapping_id, center_x, center_y), ...]}}
+    # Clusters per time: {time: {camera: {id: [(feature, file_path, center_x, center_y), ...]}}}
+    cam_id_cluster_per_time = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+    # For non-camera 0, record the set of camera ids encountered (camera 0 is our base and is treated separately)
+    camera_set_per_time = defaultdict(set)
+    # For assigning new mapping IDs per time
+    id_cont_per_time = defaultdict(lambda: 1)
+    # For camera 0, we create a mapping from original id to new mapping id
+    new_id_mapping = defaultdict(dict)
+    # Keep track of all times encountered
+    time_set = set()
+
+    # -------------------------------------------------------------------------
+    # STEP 1: Build initial clusters from merge_storage
+    # -------------------------------------------------------------------------
+    for file_path, entries in tqdm(merge_storage.items(), desc="Building clusters for multi-camera mapping"):
+        parts = file_path.split(os.sep)
+        if len(parts) < 2:
+            continue
+        time = parts[-2]  # Extract time from directory name
+        time_set.add(time)
+        try:
+            # Assume the file name starts with the camera id (e.g., "0_label.txt")
+            cam = int(parts[-1].split('_')[0])
+        except ValueError:
+            continue  # Skip if camera id is not an integer
+        
+        # For non-camera 0, record the camera id
+        if cam != 0:
+            camera_set_per_time[time].add(cam)
+        
+        for (feature, orig_id, center_x, center_y) in entries:
+            if cam == 0:
+                # For camera 0, assign a new mapping id if not already done
+                if orig_id not in new_id_mapping[time]:
+                    new_id_mapping[time][orig_id] = id_cont_per_time[time]
+                    id_cont_per_time[time] += 1
+                mapping_id = new_id_mapping[time][orig_id]
+                # Update multi_camera_storage and clusters for camera 0
+                cam_id_cluster_per_time[time][0][mapping_id].append((feature, file_path, center_x, center_y))
+            else:
+                # For non-camera 0, initially keep the original id (to be remapped later)
+                if feature is None:
+                    cam_id_cluster_per_time[time][cam][orig_id].append((feature, file_path, center_x, center_y))
+                else:
+
+                    # orig_id+=10000
+                    cam_id_cluster_per_time[time][cam][orig_id].append((feature, file_path, center_x, center_y))
+    
+    # -------------------------------------------------------------------------
+    # STEP 2: Remap IDs for non-camera 0 clusters using reference clusters 
+    #         (camera 0 and lower-index non-zero cameras)
+    # -------------------------------------------------------------------------
+    for time in tqdm(time_set, desc="Mapping IDs across cameras per time"):
+        # Get sorted non-zero cameras for this time (lowest first)
+        sorted_nonzero = sorted(camera_set_per_time[time])
+        time_range = "_".join(time.split('_')[1:])  # Extracts "150000_151900"
+
+        # For each non-zero camera
+        for cam in sorted_nonzero:
+            # Iterate over a copy of the clusters to allow key modifications
+            for cluster_id, cluster_entries in list(cam_id_cluster_per_time[time][cam].items()):
+                best_similarity = -1
+                # assign = False
+                best_mapping_id = None
+                # Define reference cameras: include camera 0 and any non-zero camera with an id lower than current cam
+                ref_cams = [0] + [c for c in sorted_nonzero if c < cam]
+                # Compare each feature in the current cluster with each feature in all reference clusters
+                for ref_cam in ref_cams:
+                    for ref_cluster_id, ref_entries in cam_id_cluster_per_time[time].get(ref_cam, {}).items():
+                        # worst_similarity = 6666
+                        for (feature, _, _, _) in cluster_entries:
+                            if feature is None:
+                                continue  # Skip if the feature is None
+                            for (ref_feature, _, _, _) in ref_entries:
+                                if ref_feature is None:
+                                    continue  # Skip if the reference feature is None
+                                sim = cosine_similarity(feature, ref_feature).squeeze()
+                                # if sim < worst_similarity:
+                                #     worst_similarity = sim
+                                    # best_mapping_id = ref_cluster_id
+                                if sim > best_similarity:
+                                    best_similarity = sim
+                                    best_mapping_id = ref_cluster_id
+                        # if worst_similarity > all_camera_thresholds[time_range]:
+                        #     if worst_similarity>best_similarity:
+                        #         best_mapping_id = ref_cluster_id
+                        #         best_similarity = worst_similarity
+                        #         assign = True
+                            
+                # Decide the mapping id based on the similarity threshold
+                if best_similarity > all_camera_thresholds[time_range]*1.5:
+
+                    mapping_id = best_mapping_id
+                else:
+                    mapping_id = id_cont_per_time[time]
+                    id_cont_per_time[time] += 1
+                # Update the cluster's mapping id if it differs from its original cluster_id
+                if mapping_id != cluster_id:
+                    if mapping_id in cam_id_cluster_per_time[time][cam]:
+                        cam_id_cluster_per_time[time][cam][mapping_id].extend(cluster_entries)
+                    else:
+                        cam_id_cluster_per_time[time][cam][mapping_id] = cluster_entries
+                    del cam_id_cluster_per_time[time][cam][cluster_id]
+    
+    # -------------------------------------------------------------------------
+    # STEP 3: Build a lookup table for final mapping IDs and reconstruct final storage
+    # -------------------------------------------------------------------------
+    # Create a mapping from file_path and a key (e.g., rounded coordinates) to final mapping id.
+    final_id_mapping = defaultdict(dict)
+    for time, cam_dict in cam_id_cluster_per_time.items():
+        for cam, cluster_dict in cam_dict.items():
+            for mapping_id, cluster_entries in cluster_dict.items():
+                for (feature, file_path, center_x, center_y) in cluster_entries:
+                    # Check if center_x or center_y is None
+                    if center_x is None or center_y is None:
+                        key = (None, None)
+                    else:
+                        key = (round(center_x, 4), round(center_y, 4))
+                    final_id_mapping[file_path][key] = mapping_id
+
+
+    # Now, iterate over merge_storage in its original order and update mapping IDs
+    final_multi_camera_storage = defaultdict(list)
+    for file_path, entries in merge_storage.items():
+        for (feature, orig_id, center_x, center_y) in entries:
+            if center_x is None or center_y is None:
+                key = (None, None)
+            else:
+                key = (round(center_x, 4), round(center_y, 4))
+            # If a final mapping exists, use it; otherwise fallback to the original id.
+            mapping_id = final_id_mapping[file_path].get(key, orig_id)
+            final_multi_camera_storage[file_path].append((feature, mapping_id, center_x, center_y))
+
+    return final_multi_camera_storage
+
+
+
+
+
+
+
+                        
+
+
+
+        
+
+
+
+
+
+ 
+
+    
+    
+        
+
+
+
+# =============================================================================
+# Main Pipeline
+# =============================================================================
+if __name__ == '__main__':
+    # -----------------------------------------------------------------------------
+    # Setup: paths, models, and thresholds
+    # -----------------------------------------------------------------------------
+    dataset_path = '/home/eddy/Desktop/cropped_image'
+    backbone_model = 'swin'
+    weights_path = '/home/eddy/Desktop/MasterThesis/mainProgram/AICUP_datasets_fine_tune/swin_center_lr_0.5_loss_3e-4_smmothing_0.1/swin_center_loss_best.pth'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+    # for each camera ,calculate the threshold 
+    single_camera_thresholds, all_camera_thresholds = prepare_trainer_and_calculate_threshold(
+        path=dataset_path,
+        backbone=backbone_model,
+        custom_weights_path=weights_path,
+        device=device
+    )
+    print(f"single_camera_thresholds: {single_camera_thresholds}")
+    print(f"all_camera_thresholds: {all_camera_thresholds}")
+
+    # -----------------------------------------------------------------------------
+    # Load image transformations and model
+    # -----------------------------------------------------------------------------
+    image_root_directory = '/home/eddy/Desktop/MasterThesis/mainProgram/AICUP_datasets/test/images'
+    label_root_directory = '/home/eddy/Desktop/MasterThesis/mainProgram/AICUP_datasets/test/labels'
+    save_path = os.path.join('/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking', 'labels')
+    os.makedirs(save_path, exist_ok=True)
+
+    image_transform = Transforms.get_valid_transform()
+    net = make_model(backbone='swin', num_classes=3441)
+    state_dict = torch.load(weights_path, map_location='cpu')
+    net.load_state_dict(state_dict)
+    net.eval()
+
+    # Create a label-to-feature mapping
+    label_to_feature_map = create_label_feature_map(net, image_root_directory, label_root_directory, image_transform)
+
+    # -----------------------------------------------------------------------------
+    # Forward tracking
+    # -----------------------------------------------------------------------------
+    buffer_size = 5
+    storage_forward = process_label_features(label_to_feature_map, single_camera_thresholds, buffer_size)
+
+    # -----------------------------------------------------------------------------
+    # Reverse tracking: sort labels in reverse (by time and frame)
+    # -----------------------------------------------------------------------------
+    reversed_label_to_feature_map = dict(
+        sorted(
+            label_to_feature_map.items(),
+            key=lambda item: (
+                os.path.basename(os.path.dirname(item[0])),  # time_range directory name
+                -int(os.path.basename(item[0]).split('.')[0])  # descending frame number
+            )
+        )
+    )
+    storage_reverse = process_label_features(reversed_label_to_feature_map, single_camera_thresholds, buffer_size)
+
+    # -----------------------------------------------------------------------------
+    # Merge storages and write results
+    # -----------------------------------------------------------------------------
+    merged_storage = merge_storages(storage_forward, storage_reverse)
+    
+
+    final_multi_camera_storage = multi_camera_mapping(merged_storage,all_camera_thresholds)
+    write_storage(merged_storage, storage_forward, storage_reverse,final_multi_camera_storage)
+
+    target_labels = '/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/multi_camera_labels'
+    source_labels = '/home/eddy/Desktop/train/test/labels'
+    update_labels(target_labels,source_labels)
+    target_labels = '/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/forward_labels'
+    update_labels(target_labels,source_labels)
+
+    target_labels = '/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/reverse_labels'
+    update_labels(target_labels,source_labels)
+
+    target_labels = '/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/merge_labels'
+    update_labels(target_labels,source_labels)
+
+
+
+

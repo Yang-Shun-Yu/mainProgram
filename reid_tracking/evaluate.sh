@@ -4,7 +4,7 @@
 TS_RESULTS_DIR='/home/eddy/Desktop/MasterThesis/mainProgram/ts_results'
 GT_RESULT_DIR='/home/eddy/Desktop/MasterThesis/mainProgram/gt_results'
 
-SOURCE_LABELS='/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/multi_camera_labels/'
+SOURCE_LABELS='/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/reverse_labels/'
 TARGET_LABELS='/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/labels/'
 cp -r "${SOURCE_LABELS}"* "${TARGET_LABELS}"
 

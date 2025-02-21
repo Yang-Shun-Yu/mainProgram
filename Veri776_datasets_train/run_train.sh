@@ -1,4 +1,3 @@
-# 
 #!/bin/bash
 
 # Set dataset path and other common parameters
@@ -34,5 +33,5 @@ for BACKBONE in "${BACKBONES[@]}"; do
     SAVE_DIR="${SAVE_DIRS[${BACKBONE}_center]}"
     
     # Run the training with center loss
-    python train.py --dataset "$DATASET_PATH" --workers $WORKERS --save_dir "$SAVE_DIR" --backbone "$BACKBONE" --center_loss --smoothing $SMOOTHING
+    python /home/eddy/Desktop/MasterThesis/mainProgram/Veri776_datasets_train/train.py --dataset "$DATASET_PATH" --workers $WORKERS --save_dir "$SAVE_DIR" --backbone "$BACKBONE" --center_loss --smoothing $SMOOTHING
 done

@@ -5,7 +5,7 @@ Tracking pipeline for re-identification:
 - Perform forward and reverse tracking using a buffering mechanism.
 - Merge the tracking storages.
 """
-
+import logging
 import os
 import math
 import copy
@@ -27,7 +27,22 @@ import sys
 # Add a custom path for trainer module if needed
 sys.path.append(os.path.abspath("/home/eddy/Desktop/MasterThesis/mainProgram/AICUP_datasets_fine_tune"))
 from trainer import prepare_trainer_and_calculate_threshold
+# Configure logging: you can adjust level to DEBUG for detailed logs
+# Configure logging
+# Configure logging
+log_filename = 'tracking_pipeline.log'
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_filename, mode='w'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
+# Example usage
+logger.info('Tracking pipeline started.')
 
 # =============================================================================
 # Helper Classes and Functions
@@ -116,7 +131,7 @@ def update_labels(target_labels_folder, source_labels_folder):
 
         # Check if corresponding subfolder exists in source_labels
         if not os.path.exists(source_subfolder_path):
-            print(f"Skipping {subfolder}, corresponding folder not found in source labels.")
+            # print(f"Skipping {subfolder}, corresponding folder not found in source labels.")
             continue
 
         # Iterate through all text files in target_labels subfolder
@@ -126,7 +141,7 @@ def update_labels(target_labels_folder, source_labels_folder):
 
             # Check if the corresponding source labels file exists
             if not os.path.exists(source_file_path):
-                print(f"Skipping {txt_file} in {subfolder}, corresponding file not found in source labels.")
+                # print(f"Skipping {txt_file} in {subfolder}, corresponding file not found in source labels.")
                 continue
             
             # Read the contents of the source labels file
@@ -552,71 +567,7 @@ def process_label_features(label_to_feature_map, single_thresholds, buffer_size=
         save_buffer_to_storage(buffer, storage)
     return storage
 
-# def multi_camera_mapping(merge_storage,all_camera_thresholds):
-#     # multi_camera_storage = defaultdict(list)
-#     multi_camera_storage_per_time = defaultdict(lambda: defaultdict(list))
-#     cam_id_cluster_per_time = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
 
-#     camera_set_per_time = defaultdict(set)
-#     id_cont_per_time = defaultdict(lambda: 1)
-#     new_id_mapping = defaultdict(dict)
-#     time_set = set()
-
-#     for file_path, entries in tqdm(merge_storage.items(), desc="Processing multi-camera mapping"):
-#         parts = file_path.split(os.sep)
-#         time = parts[-2]  # Extract time
-#         if time not in time_set:
-#             time_set.add(time)
-#         cam = int(parts[-1].split('_')[0])  # Extract camera ID
-
-#         # Ensure each camera is tracked per time
-#         if cam not in camera_set_per_time[time] and cam != 0:
-#             camera_set_per_time[time].add(cam)
-
-#         for feature, id, center_x, center_y in entries:
-#             if cam == 0:
-#                 # Assign new IDs per time
-#                 if id not in new_id_mapping[time]:  
-#                     new_id_mapping[time][id] = id_cont_per_time[time]
-#                     id_cont_per_time[time] += 1
-                
-#                 multi_camera_storage_per_time[time][file_path].append(
-#                     (feature, new_id_mapping[time][id], center_x, center_y)
-#                 )
-#                 cam_id_cluster_per_time[time][cam][new_id_mapping[time][id]].append((feature,file_path))
-#             else:
-#                 cam_id_cluster_per_time[time][cam][id].append((feature,file_path))
-
-
-#     for time in time_set:
-#         camera_set_per_time[time] = sorted(camera_set_per_time[time])
-
-#     for time in time_set:
-#         multi_cam_mapping = {}
-#         for index , cam in enumerate(camera_set_per_time[time]):
-#             for id,entries in cam_id_cluster_per_time[time][cam].items():
-#                 max_similarity = -1
-#                 mapping_id = -1
-#                 for feature,_ in entries:
-#                     for current_cam in range(index+1):
-#                         for current_id,current_entries in cam_id_cluster_per_time[time][current_cam]:
-#                             for current_feature,_ in current_entries:
-#                                 similarity = cosine_similarity(feature,current_feature).squeeze()
-#                                 if similarity>max_similarity:
-#                                     max_similarity = similarity
-#                                     mapping_id = current_id
-#                 if max_similarity>all_camera_thresholds:
-#                     for feature,file_path in entries:
-#                         multi_camera_storage_per_time[time][file_path].append(
-#                         (feature, mapping_id, center_x, center_y))
-#                     revise the cam_id_cluster_per_time[time][cam][id] to cam_id_cluster_per_time[time][cam][imapping_id]
-#                 else:
-#                     for feature,file_path in entries:
-#                         multi_camera_storage_per_time[time][file_path].append(
-#                         (feature, id_cont_per_time[time], center_x, center_y))
-
-#                     revise the cam_id_cluster_per_time[time][cam][id] to cam_id_cluster_per_time[time][cam][id_cont_per_time[time]]
-#                     id_cont_per_time[time]+=1
                         
 def multi_camera_mapping(merge_storage, all_camera_thresholds):
     """
@@ -652,6 +603,8 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
     # STEP 1: Build initial clusters from merge_storage
     # -------------------------------------------------------------------------
     for file_path, entries in tqdm(merge_storage.items(), desc="Building clusters for multi-camera mapping"):
+        if entries[0] == (None, None, None, None):
+            continue
         parts = file_path.split(os.sep)
         if len(parts) < 2:
             continue
@@ -689,6 +642,8 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
     # STEP 2: Remap IDs for non-camera 0 clusters using reference clusters 
     #         (camera 0 and lower-index non-zero cameras)
     # -------------------------------------------------------------------------
+
+    logger.info("STEP 2: Remapping IDs for non-camera 0 clusters")
     for time in tqdm(time_set, desc="Mapping IDs across cameras per time"):
         # Get sorted non-zero cameras for this time (lowest first)
         sorted_nonzero = sorted(camera_set_per_time[time])
@@ -698,6 +653,8 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
         for cam in sorted_nonzero:
             # Iterate over a copy of the clusters to allow key modifications
             for cluster_id, cluster_entries in list(cam_id_cluster_per_time[time][cam].items()):
+                if cluster_entries[0] == (None, None, None, None):
+                    continue
                 best_similarity = -1
                 # assign = False
                 best_mapping_id = None
@@ -706,7 +663,7 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
                 # Compare each feature in the current cluster with each feature in all reference clusters
                 for ref_cam in ref_cams:
                     for ref_cluster_id, ref_entries in cam_id_cluster_per_time[time].get(ref_cam, {}).items():
-                        # worst_similarity = 6666
+                        # worst_similarity = 1
                         for (feature, _, _, _) in cluster_entries:
                             if feature is None:
                                 continue  # Skip if the feature is None
@@ -720,14 +677,16 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
                                 if sim > best_similarity:
                                     best_similarity = sim
                                     best_mapping_id = ref_cluster_id
-                        # if worst_similarity > all_camera_thresholds[time_range]:
+
+                        # if worst_similarity > all_camera_thresholds[time_range] and worst_similarity>best_similarity:
                         #     if worst_similarity>best_similarity:
                         #         best_mapping_id = ref_cluster_id
                         #         best_similarity = worst_similarity
                         #         assign = True
                             
                 # Decide the mapping id based on the similarity threshold
-                if best_similarity > all_camera_thresholds[time_range]*1.5:
+                if best_similarity > all_camera_thresholds[time_range]*1.3:
+                    logger.debug("At time %s, comparing cluster %s and ref_cluster %s: sim=%.4f", time, cluster_id, best_mapping_id, best_similarity)
 
                     mapping_id = best_mapping_id
                 else:
@@ -761,6 +720,9 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
     # Now, iterate over merge_storage in its original order and update mapping IDs
     final_multi_camera_storage = defaultdict(list)
     for file_path, entries in merge_storage.items():
+        if entries[0] == (None, None, None, None):
+            continue
+
         for (feature, orig_id, center_x, center_y) in entries:
             if center_x is None or center_y is None:
                 key = (None, None)
@@ -769,13 +731,122 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
             # If a final mapping exists, use it; otherwise fallback to the original id.
             mapping_id = final_id_mapping[file_path].get(key, orig_id)
             final_multi_camera_storage[file_path].append((feature, mapping_id, center_x, center_y))
+            logger.debug("Final mapping for %s: orig_id %s -> mapping_id %s", file_path, orig_id, mapping_id)
 
     return final_multi_camera_storage
 
 
 
 
+# last similarity methold
+# def multi_camera_mapping(merge_storage, all_camera_thresholds):
+#     """
+#     Merge multi-camera tracking results by mapping IDs across cameras per time.
+#     """
+#     from collections import defaultdict
+#     from tqdm import tqdm
+#     import torch.nn.functional as F
 
+#     # Initialize data structures
+#     cam_id_cluster_per_time = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
+#     camera_set_per_time = defaultdict(set)
+#     id_cont_per_time = defaultdict(lambda: 1)
+#     new_id_mapping = defaultdict(dict)
+#     time_set = set()
+
+#     logger.info("STEP 1: Building initial clusters for multi-camera mapping")
+#     for file_path, entries in tqdm(merge_storage.items(), desc="Building clusters"):
+#         parts = file_path.split(os.sep)
+#         if len(parts) < 2:
+#             logger.warning("Skipping file with unexpected path format: %s", file_path)
+#             continue
+#         time = parts[-2]
+#         time_set.add(time)
+#         try:
+#             cam = int(parts[-1].split('_')[0])
+#         except ValueError:
+#             logger.error("Camera ID not found in file name: %s", parts[-1])
+#             continue
+
+#         if cam != 0:
+#             camera_set_per_time[time].add(cam)
+        
+#         for (feature, orig_id, center_x, center_y) in entries:
+#             if cam == 0:
+#                 if orig_id not in new_id_mapping[time]:
+#                     new_id_mapping[time][orig_id] = id_cont_per_time[time]
+#                     id_cont_per_time[time] += 1
+#                 mapping_id = new_id_mapping[time][orig_id]
+#                 cam_id_cluster_per_time[time][0][mapping_id].append((feature, file_path, center_x, center_y))
+#                 logger.debug("Camera 0: Mapped orig_id %s to mapping_id %s at time %s", orig_id, mapping_id, time)
+#             else:
+#                 cam_id_cluster_per_time[time][cam][orig_id].append((feature, file_path, center_x, center_y))
+    
+#     logger.info("STEP 2: Remapping IDs for non-camera 0 clusters")
+#     for time in tqdm(time_set, desc="Mapping IDs per time"):
+#         sorted_nonzero = sorted(camera_set_per_time[time])
+#         time_range = "_".join(time.split('_')[1:])  
+#         for cam in sorted_nonzero:
+#             for cluster_id, cluster_entries in list(cam_id_cluster_per_time[time][cam].items()):
+#                 best_similarity = -1
+#                 assign = False
+#                 best_mapping_id = None
+#                 # Initialize worst_similarity properly (e.g., assuming cosine similarity in [0,1])
+#                 worst_similarity = 1.0
+
+#                 ref_cams = [0] + [c for c in sorted_nonzero if c < cam]
+#                 for ref_cam in ref_cams:
+#                     for ref_cluster_id, ref_entries in cam_id_cluster_per_time[time].get(ref_cam, {}).items():
+#                         for (feature, _, _, _) in cluster_entries:
+#                             if feature is None:
+#                                 continue
+#                             for (ref_feature, _, _, _) in ref_entries:
+#                                 if ref_feature is None:
+#                                     continue
+#                                 sim = cosine_similarity(feature, ref_feature).squeeze()
+#                                 # Update similarity metrics as needed
+#                                 if sim < worst_similarity :
+#                                     worst_similarity = sim
+#                         if worst_similarity > all_camera_thresholds[time_range] and worst_similarity > best_similarity:
+#                             best_similarity = worst_similarity
+#                             best_mapping_id = ref_cluster_id
+#                             assign = True
+                            
+#                             logger.debug("At time %s, comparing cluster %s and ref_cluster %s: sim=%.4f", time, cluster_id, ref_cluster_id, worst_similarity)
+#                             worst_similarity = 1.0
+
+#                 if assign:
+#                     mapping_id = best_mapping_id
+#                 else:
+#                     mapping_id = id_cont_per_time[time]
+#                     id_cont_per_time[time] += 1
+#                 if mapping_id != cluster_id:
+#                     if mapping_id in cam_id_cluster_per_time[time][cam]:
+#                         cam_id_cluster_per_time[time][cam][mapping_id].extend(cluster_entries)
+#                     else:
+#                         cam_id_cluster_per_time[time][cam][mapping_id] = cluster_entries
+#                     del cam_id_cluster_per_time[time][cam][cluster_id]
+#                     logger.info("Reassigned cluster %s to mapping_id %s at time %s", cluster_id, mapping_id, time)
+
+#     # STEP 3: Build final mapping lookup table
+#     final_id_mapping = defaultdict(dict)
+#     for time, cam_dict in cam_id_cluster_per_time.items():
+#         for cam, cluster_dict in cam_dict.items():
+#             for mapping_id, cluster_entries in cluster_dict.items():
+#                 for (feature, file_path, center_x, center_y) in cluster_entries:
+#                     key = (None, None) if center_x is None or center_y is None else (round(center_x, 4), round(center_y, 4))
+#                     final_id_mapping[file_path][key] = mapping_id
+
+#     final_multi_camera_storage = defaultdict(list)
+#     for file_path, entries in merge_storage.items():
+#         for (feature, orig_id, center_x, center_y) in entries:
+#             key = (None, None) if center_x is None or center_y is None else (round(center_x, 4), round(center_y, 4))
+#             mapping_id = final_id_mapping[file_path].get(key, orig_id)
+#             final_multi_camera_storage[file_path].append((feature, mapping_id, center_x, center_y))
+#             logger.debug("Final mapping for %s: orig_id %s -> mapping_id %s", file_path, orig_id, mapping_id)
+
+#     logger.info("Completed multi-camera mapping")
+#     return final_multi_camera_storage
 
 
                         
@@ -817,6 +888,9 @@ if __name__ == '__main__':
     )
     print(f"single_camera_thresholds: {single_camera_thresholds}")
     print(f"all_camera_thresholds: {all_camera_thresholds}")
+    logger.info("---------------------------camera_thresholds---------------------------")
+    logger.info("single_camera_thresholds: %s", single_camera_thresholds)
+    logger.info("all_camera_thresholds: %s", all_camera_thresholds)
 
     # -----------------------------------------------------------------------------
     # Load image transformations and model
@@ -875,7 +949,7 @@ if __name__ == '__main__':
 
     target_labels = '/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/merge_labels'
     update_labels(target_labels,source_labels)
-
+logger.info('Tracking pipeline finished.')
 
 
 

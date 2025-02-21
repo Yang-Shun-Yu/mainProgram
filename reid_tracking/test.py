@@ -307,97 +307,97 @@ def merge_storages(storage_forward, storage_reverse):
 
     # # Set an acceptable threshold (e.g., 30 degrees in radians).
     # angle_threshold = math.radians(30)
-import os
+# import os
 
 
 
-def update_merge_labels(merge_labels_folder, labels_folder):
-    for subfolder in os.listdir(merge_labels_folder):
-        merge_subfolder_path = os.path.join(merge_labels_folder, subfolder)
+# def update_merge_labels(merge_labels_folder, labels_folder):
+#     for subfolder in os.listdir(merge_labels_folder):
+#         merge_subfolder_path = os.path.join(merge_labels_folder, subfolder)
         
-        # Ensure the subfolder is a directory
-        if not os.path.isdir(merge_subfolder_path):
-            continue
+#         # Ensure the subfolder is a directory
+#         if not os.path.isdir(merge_subfolder_path):
+#             continue
         
-        for txt_file in os.listdir(merge_subfolder_path):
-            merge_file_path = os.path.join(merge_subfolder_path, txt_file)
+#         for txt_file in os.listdir(merge_subfolder_path):
+#             merge_file_path = os.path.join(merge_subfolder_path, txt_file)
 
-            # Read the contents of merge_labels file
-            with open(merge_file_path, "r") as merge_file:
-                merge_lines = merge_file.readlines()
+#             # Read the contents of merge_labels file
+#             with open(merge_file_path, "r") as merge_file:
+#                 merge_lines = merge_file.readlines()
 
-            # Remove lines that contain only 'None\n'
-            cleaned_lines = [line for line in merge_lines if line.strip() != "None"]
+#             # Remove lines that contain only 'None\n'
+#             cleaned_lines = [line for line in merge_lines if line.strip() != "None"]
 
-            # If all lines were 'None\n', the file should be empty
-            if not cleaned_lines:
-                # print(f"File contains only 'None': {merge_file_path}. Clearing it.")
-                with open(merge_file_path, "w") as merge_file:
-                    merge_file.write("")  # Write nothing, making it empty
-            elif cleaned_lines != merge_lines:  # Only write back if changes were made
-                print(f"Removing 'None' lines from: {merge_file_path}")
-                with open(merge_file_path, "w") as merge_file:
-                    merge_file.write("\n".join(cleaned_lines) + "\n")
+#             # If all lines were 'None\n', the file should be empty
+#             if not cleaned_lines:
+#                 # print(f"File contains only 'None': {merge_file_path}. Clearing it.")
+#                 with open(merge_file_path, "w") as merge_file:
+#                     merge_file.write("")  # Write nothing, making it empty
+#             elif cleaned_lines != merge_lines:  # Only write back if changes were made
+#                 print(f"Removing 'None' lines from: {merge_file_path}")
+#                 with open(merge_file_path, "w") as merge_file:
+#                     merge_file.write("\n".join(cleaned_lines) + "\n")
 
 
-    # Iterate through each subfolder in merge_labels
-    for subfolder in os.listdir(merge_labels_folder):
-        merge_subfolder_path = os.path.join(merge_labels_folder, subfolder)
-        labels_subfolder_path = os.path.join(labels_folder, subfolder)
+#     # Iterate through each subfolder in merge_labels
+#     for subfolder in os.listdir(merge_labels_folder):
+#         merge_subfolder_path = os.path.join(merge_labels_folder, subfolder)
+#         labels_subfolder_path = os.path.join(labels_folder, subfolder)
 
-        # Check if corresponding subfolder exists in labels
-        if not os.path.exists(labels_subfolder_path):
-            print(f"Skipping {subfolder}, corresponding folder not found in labels.")
-            continue
+#         # Check if corresponding subfolder exists in labels
+#         if not os.path.exists(labels_subfolder_path):
+#             print(f"Skipping {subfolder}, corresponding folder not found in labels.")
+#             continue
 
-        # Iterate through all txt files in merge_labels subfolder
-        for txt_file in os.listdir(merge_subfolder_path):
-            merge_file_path = os.path.join(merge_subfolder_path, txt_file)
-            labels_file_path = os.path.join(labels_subfolder_path, txt_file)
+#         # Iterate through all txt files in merge_labels subfolder
+#         for txt_file in os.listdir(merge_subfolder_path):
+#             merge_file_path = os.path.join(merge_subfolder_path, txt_file)
+#             labels_file_path = os.path.join(labels_subfolder_path, txt_file)
 
-            # Check if the corresponding labels file exists
-            if not os.path.exists(labels_file_path):
-                print(f"Skipping {txt_file} in {subfolder}, corresponding file not found in labels.")
-                continue
+#             # Check if the corresponding labels file exists
+#             if not os.path.exists(labels_file_path):
+#                 print(f"Skipping {txt_file} in {subfolder}, corresponding file not found in labels.")
+#                 continue
             
-            # Read the contents of labels file
-            with open(labels_file_path, "r") as labels_file:
-                labels_lines = labels_file.readlines()
+#             # Read the contents of labels file
+#             with open(labels_file_path, "r") as labels_file:
+#                 labels_lines = labels_file.readlines()
 
-            # Read the contents of merge_labels file
-            with open(merge_file_path, "r") as merge_file:
-                merge_lines = merge_file.readlines()
+#             # Read the contents of merge_labels file
+#             with open(merge_file_path, "r") as merge_file:
+#                 merge_lines = merge_file.readlines()
 
-            # Ensure merge_labels has the same number of lines as labels
+#             # Ensure merge_labels has the same number of lines as labels
 
-            if len(labels_lines) != len(merge_lines):
-                print(f"Skipping {txt_file} in {subfolder}, mismatch in line count between labels and merge_labels.")
-                continue
+#             if len(labels_lines) != len(merge_lines):
+#                 print(f"Skipping {txt_file} in {subfolder}, mismatch in line count between labels and merge_labels.")
+#                 continue
 
-            # Process each line
-            updated_lines = []
-            for i, label_line in enumerate(labels_lines):
-                label_parts = label_line.strip().split()
-                merge_value = merge_lines[i].strip()  # The value from merge_labels
+#             # Process each line
+#             updated_lines = []
+#             for i, label_line in enumerate(labels_lines):
+#                 label_parts = label_line.strip().split()
+#                 merge_value = merge_lines[i].strip()  # The value from merge_labels
 
-                # Replace the last value in label_parts with the merge_value
-                # label_parts[-1] = merge_value
-                label_parts[-1] = str(int(label_parts[-1]))
+#                 # Replace the last value in label_parts with the merge_value
+#                 # label_parts[-1] = merge_value
+#                 label_parts[-1] = str(int(label_parts[-1]))
 
-                # Reconstruct the line and add to the list
-                # updated_lines.append(" ".join(label_parts))
-                updated_lines.append(label_parts[-1])
+#                 # Reconstruct the line and add to the list
+#                 # updated_lines.append(" ".join(label_parts))
+#                 updated_lines.append(label_parts[-1])
 
-            # Write the modified content back to merge_labels file
-            with open(merge_file_path, "w") as merge_file:
-                merge_file.write("\n".join(updated_lines) + "\n")
+#             # Write the modified content back to merge_labels file
+#             with open(merge_file_path, "w") as merge_file:
+#                 merge_file.write("\n".join(updated_lines) + "\n")
 
-            # print(f"Updated {txt_file} in {subfolder}")
+#             # print(f"Updated {txt_file} in {subfolder}")
 
-# Example usage
-merge_labels_folder = "/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/merge_labels"
-labels_folder = "/home/eddy/Desktop/train/test/labels"
-update_merge_labels(merge_labels_folder, labels_folder)
+# # Example usage
+# merge_labels_folder = "/home/eddy/Desktop/MasterThesis/mainProgram/reid_tracking/merge_labels"
+# labels_folder = "/home/eddy/Desktop/train/test/labels"
+# update_merge_labels(merge_labels_folder, labels_folder)
 
 
 # def update_merge_labels(labels_folder):
@@ -436,3 +436,175 @@ update_merge_labels(merge_labels_folder, labels_folder)
 # labels_folder = "/home/eddy/Desktop/train/test/labels"
 # update_merge_labels(labels_folder)
 
+# import logging
+
+# # Configure logging
+# logging.basicConfig(
+#     level=logging.DEBUG,  # Set the minimum log level
+#     format='%(asctime)s - %(levelname)s - %(message)s',  # Log format
+#     filename='app.log',  # Log output file
+#     filemode='w'  # Overwrite the log file on each run
+# )
+
+# # Logging messages at different levels
+# logging.debug("This is a debug message")
+# logging.info("This is an info message")
+# logging.warning("This is a warning message")
+# logging.error("This is an error message")
+# logging.critical("This is a critical message")
+
+# print("Logs are written to app.log")
+
+import numpy as np
+
+class KalmanFilterCV:
+    """
+    Kalman Filter for 2D Constant Velocity Model.
+    State vector x = [pos_x, pos_y, vel_x, vel_y]^T
+    """
+
+    def __init__(self, dt=1.0):
+        """
+        初始化卡爾曼濾波所需參數:
+        F: 狀態轉移矩陣 (State Transition)
+        H: 量測模型 (Measurement Model)
+        Q: 過程雜訊 (Process Noise Covariance)
+        R: 量測雜訊 (Measurement Noise Covariance)
+        x: 狀態向量初始值 [pos_x, pos_y, vel_x, vel_y]
+        P: 狀態協方差矩陣 (State Covariance)
+        
+        :param dt: 連續影格/時間步長 (Delta time)
+        """
+        self.dt = dt
+        
+        # 狀態轉移矩陣 F
+        # 假設等速模型 (pos <- pos + vel*dt; vel <- vel)
+        self.F = np.array([
+            [1, 0, self.dt, 0],
+            [0, 1, 0, self.dt],
+            [0, 0, 1,      0],
+            [0, 0, 0,      1]
+        ])
+
+        # 量測模型 H (只量測位置)
+        self.H = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0]
+        ])
+
+        # 過程雜訊協方差 Q (可視情況調整)
+        # 假設加速度引入不確定性
+        # 若 dt=1，簡化處理
+        self.Q = np.array([
+            [1, 0, 0, 0],
+            [0, 1, 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1]
+        ]) * 0.1
+
+        # 量測雜訊協方差 R (可視情況調整)
+        # 假設量測誤差在 x, y 上皆相同
+        self.R = np.array([
+            [1, 0],
+            [0, 1]
+        ]) * 1.0
+
+        # 狀態向量 x，初始位置假設在 [0, 0]，速度 [1, 0]
+        self.x = np.array([0, 0, 1, 0], dtype=float)
+
+        # 狀態協方差 P (初始給定較大不確定性)
+        self.P = np.eye(4) * 500.0
+
+    def predict(self):
+        """
+        預測步驟 (Prediction):
+        x(k+1|k) = F * x(k|k)
+        P(k+1|k) = F * P(k|k) * F^T + Q
+        """
+        self.x = self.F @ self.x                # 狀態預測
+        self.P = self.F @ self.P @ self.F.T + self.Q  # 協方差預測
+
+        return self.x
+
+    def update(self, z):
+        """
+        更新步驟 (Update):
+        K = P(k+1|k)*H^T * [H*P(k+1|k)*H^T + R]^(-1)
+        x(k+1|k+1) = x(k+1|k) + K*(z - H*x(k+1|k))
+        P(k+1|k+1) = (I - K*H)*P(k+1|k)
+        
+        :param z: 量測值 (觀測位置) [z_x, z_y]
+        """
+        # 計算卡爾曼增益 K
+        S = self.H @ self.P @ self.H.T + self.R        # 量測預測的協方差
+        K = self.P @ self.H.T @ np.linalg.inv(S)       # 卡爾曼增益
+
+        # 狀態修正
+        y = z - (self.H @ self.x)                      # 量測殘差
+        self.x = self.x + K @ y
+
+        # 協方差修正
+        I = np.eye(self.P.shape[0])
+        self.P = (I - K @ self.H) @ self.P
+
+        return self.x
+
+def simulate_measurements(num_steps=10, dt=1.0):
+    """
+    簡單模擬某車輛以 (vx=1.0, vy=0.5) 在 2D 平面上等速行駛。
+    加入隨機雜訊以模擬量測。
+    :param num_steps: 模擬時刻數
+    :param dt: 時間間隔
+    :return: (true_positions, measurements)
+    """
+    # 真實初始位置
+    pos_x = 0.0
+    pos_y = 0.0
+    vx = 1.0
+    vy = 0.5
+
+    true_positions = []
+    measurements = []
+
+    for _ in range(num_steps):
+        # 真實狀態更新 (等速)
+        pos_x += vx * dt
+        pos_y += vy * dt
+
+        # 加入量測雜訊 (normal(0,1) ~ 觀測誤差)
+        meas_x = pos_x + np.random.normal(0, 1)
+        meas_y = pos_y + np.random.normal(0, 1)
+
+        true_positions.append((pos_x, pos_y))
+        measurements.append((meas_x, meas_y))
+
+    return true_positions, measurements
+
+def main():
+    # 初始化 Kalman Filter
+    kf = KalmanFilterCV(dt=1.0)
+
+    # 模擬真實軌跡 & 雜訊量測
+    num_steps = 10
+    true_positions, measurements = simulate_measurements(num_steps)
+
+    print("==== Kalman Filter Prediction Demo ====")
+    print(f"{'Step':<5} | {'True Pos':>15} | {'Measured':>15} | {'KF Prediction':>15}")
+
+    for i in range(num_steps):
+        # 1. 預測 (在拿到量測值之前執行)
+        pred_state = kf.predict()
+        pred_pos = (pred_state[0], pred_state[1])
+
+        # 2. 取得量測後，執行更新
+        z = np.array(measurements[i])
+        updated_state = kf.update(z)
+        updated_pos = (updated_state[0], updated_state[1])
+
+        print(f"{i:<5} | "
+              f"{true_positions[i]!s:>15} | "
+              f"{measurements[i]!s:>15} | "
+              f"{updated_pos!s:>15}")
+
+if __name__ == "__main__":
+    main()

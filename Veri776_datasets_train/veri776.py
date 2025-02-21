@@ -4,144 +4,241 @@ from PIL import Image
 import numpy as np
 from collections import defaultdict
 import torch
-
 import os
 
-# Class----------------------------------------------------------------------------|
-# veri776 train 
+
 class Veri776Train(Dataset):
-    def __init__(self,img_paths,vehicle_ids,class_map,transform, veri776_root):
+    """
+    Dataset for training on the Veri776 dataset.
+    Each sample contains an anchor, a positive, and a negative image.
+    """
+
+    def __init__(
+        self,
+        img_paths: list,
+        vehicle_ids: list,
+        class_map: dict,
+        transform,
+        veri776_root: str,
+    ):
+        """
+        Initialize the training dataset.
+
+        Args:
+            img_paths (list): List of image file paths.
+            vehicle_ids (list): List of vehicle IDs corresponding to the images.
+            class_map (dict): Mapping from vehicle ID to class index.
+            transform: Transformations to be applied on the images.
+            veri776_root (str): Root directory of the Veri776 dataset.
+        """
         self.img_paths = np.array(img_paths)
         self.vehicle_ids = np.array(vehicle_ids)
         self.class_map = class_map
         self.transform = transform
-        self.class_tree = self.build_class_tree(img_paths,vehicle_ids,class_map)
         self.veri776_root = veri776_root
+        self.class_tree = self.build_class_tree(img_paths, vehicle_ids, class_map)
 
-    def build_class_tree(self,img_paths,vehicle_ids,class_map):
+    def build_class_tree(self, img_paths: list, vehicle_ids: list, class_map: dict) -> dict:
+        """
+        Build a mapping from each class to a list of image paths.
+
+        Args:
+            img_paths (list): List of image file paths.
+            vehicle_ids (list): List of vehicle IDs.
+            class_map (dict): Mapping from vehicle ID to class index.
+
+        Returns:
+            dict: A dictionary mapping each class index to its image paths.
+        """
         class_tree = defaultdict(list)
-        for id,path in zip(vehicle_ids,img_paths):
-            class_tree[class_map[id]].append(path)
+        for vid, path in zip(vehicle_ids, img_paths):
+            class_index = class_map[vid]
+            class_tree[class_index].append(path)
         return class_tree
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.img_paths)
 
-    def __getitem__(self,index):
-        anchor_img = Image.open(os.path.join(self.veri776_root,'image_train',self.img_paths[index]))
-        
-        positive_img_class = self.class_map[self.vehicle_ids[index]]
+    def __getitem__(self, index: int):
+        """
+        Retrieve a triplet sample: anchor, positive, and negative images.
 
-        positive_img_candidates = [p for p in self.class_tree[positive_img_class] if p != self.img_paths[index]]
+        Args:
+            index (int): Index of the sample.
 
-        if not positive_img_candidates:
-            positive_img_path = self.img_paths[index]  # Use the anchor image itself as a fallback
+        Returns:
+            tuple: A tuple containing a stacked tensor of images and a tensor of labels.
+        """
+        # Load anchor image
+        anchor_path = os.path.join(self.veri776_root, "image_train", self.img_paths[index])
+        anchor_img = Image.open(anchor_path)
+
+        # Get the positive image class and candidate images (excluding the anchor)
+        positive_class = self.class_map[self.vehicle_ids[index]]
+        positive_candidates = [
+            p for p in self.class_tree[positive_class] if p != self.img_paths[index]
+        ]
+        # Fallback: if no candidate exists, use the anchor image
+        if not positive_candidates:
+            positive_path = self.img_paths[index]
         else:
-            positive_img_path = np.random.choice(positive_img_candidates)
+            positive_path = np.random.choice(positive_candidates)
 
-        # positive_img_path = np.random.choice(self.class_tree[positive_img_class])
-        
-        
-        positive_img = Image.open(os.path.join(self.veri776_root,'image_train',positive_img_path))
+        positive_img = Image.open(os.path.join(self.veri776_root, "image_train", positive_path))
 
-        negative_img_class = self.random_number_except(0,len(self.class_map),positive_img_class)
-        negative_img_path = np.random.choice(self.class_tree[negative_img_class])
+        # Select a negative image from a different class
+        negative_class = self.random_number_except(0, len(self.class_map), positive_class)
+        negative_path = np.random.choice(self.class_tree[negative_class])
+        negative_img = Image.open(os.path.join(self.veri776_root, "image_train", negative_path))
 
-        
-        negative_img = Image.open(os.path.join(self.veri776_root,'image_train',negative_img_path))
-
+        # Apply transformations if provided
         if self.transform is not None:
             anchor_img = self.transform(anchor_img)
             positive_img = self.transform(positive_img)
             negative_img = self.transform(negative_img)
 
-        return torch.stack((anchor_img,positive_img,negative_img),dim=0),torch.tensor([positive_img_class,positive_img_class,negative_img_class])
+        images = torch.stack((anchor_img, positive_img, negative_img), dim=0)
+        labels = torch.tensor([positive_class, positive_class, negative_class])
+        return images, labels
 
-    def random_number_except(self,start,end,exclude):
-        numbers = list(range(start,end))
+    def random_number_except(self, start: int, end: int, exclude: int) -> int:
+        """
+        Generate a random number within [start, end) excluding a specified value.
+
+        Args:
+            start (int): Start of the range (inclusive).
+            end (int): End of the range (exclusive).
+            exclude (int): Number to exclude.
+
+        Returns:
+            int: A randomly chosen number not equal to 'exclude'.
+        """
+        numbers = list(range(start, end))
         numbers.remove(exclude)
         return np.random.choice(numbers)
 
-# veri776 test
+
 class Veri776Test:
-    def __init__(self, img_file_names, vehicle_ids, transform, veri776_root):
-        self.img_file_names = np.array(img_file_names) # for indexing in __getitem__
+    """
+    Dataset for testing on the Veri776 dataset.
+    """
+
+    def __init__(
+        self, img_file_names: list, vehicle_ids: list, transform, veri776_root: str
+    ):
+        """
+        Initialize the test dataset.
+
+        Args:
+            img_file_names (list): List of test image file names.
+            vehicle_ids (list): List of vehicle IDs.
+            transform: Transformations to be applied on the images.
+            veri776_root (str): Root directory of the Veri776 dataset.
+        """
+        self.img_file_names = np.array(img_file_names)
         self.vehicle_ids = vehicle_ids
         self.transform = transform
         self.veri776_root = veri776_root
 
-
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.img_file_names)
 
+    def __getitem__(self, index: int):
+        """
+        Retrieve a test sample.
 
-    # def __iter__(self):
-    #     for i in range(len(self)):
-    #         img = Image.open(os.path.join(self.veri776_root, 'image_test', self.img_file_names[i]))
+        Args:
+            index (int): Index of the sample.
 
-    #         if self.transform is not None:
-    #             img = self.transform(img)
-
-
-    #         yield self.img_file_names[i], img
-
-    def __getitem__(self,index):
+        Returns:
+            tuple: A tuple containing the image name and the transformed image.
+        """
         image_name = self.img_file_names[index]
-        img = Image.open(os.path.join(self.veri776_root,'image_test',image_name))
+        img_path = os.path.join(self.veri776_root, "image_test", image_name)
+        img = Image.open(img_path)
         if self.transform is not None:
             img = self.transform(img)
-        return image_name,img
+        return image_name, img
 
 
+def parse_xml(xml_path: str):
+    """
+    Parse the XML file to extract image paths, vehicle IDs, and a class mapping.
 
-# class Veri776Test(Dataset):
-#     def __init__(self, img_file_names, vehicle_ids, transform, veri776_root):
-#         self.img_file_names = np.array(img_file_names)  # For indexing in __getitem__
-#         self.vehicle_ids = vehicle_ids
-#         self.transform = transform
-#         self.veri776_root = veri776_root
+    Args:
+        xml_path (str): Path to the XML file.
 
-#     def __len__(self):
-#         return len(self.img_file_names)
-
-#     def __getitem__(self, index):
-#         img = Image.open(os.path.join(self.veri776_root, 'image_test', self.img_file_names[index]))
-#         vehicle_id = self.vehicle_ids[index]
-
-#         if self.transform is not None:
-#             img = self.transform(img)
-
-#         return img, vehicle_id  # Returning both the image and its corresponding vehicle ID
-# Function-------------------------------------------------------------------------|
-def parse_xml(xml_path):
+    Returns:
+        tuple: A tuple containing lists of image paths, vehicle IDs, and a class mapping dictionary.
+    """
     with open(xml_path) as f:
-        et = ET.fromstring(f.read())
-        image_paths = []
-        vehicle_ids = []
-        class_map = dict()
-        cur_class = 0
+        xml_content = f.read()
+    et = ET.fromstring(xml_content)
+    image_paths = []
+    vehicle_ids = []
+    class_map = {}
+    cur_class = 0
 
-        for item in et.iter('Item'):
-            image_paths.append(item.attrib['imageName'])
-            vehicle_id = int(item.attrib['vehicleID'])
-            vehicle_ids.append(vehicle_id)
+    for item in et.iter("Item"):
+        image_paths.append(item.attrib["imageName"])
+        vehicle_id = int(item.attrib["vehicleID"])
+        vehicle_ids.append(vehicle_id)
+        if vehicle_id not in class_map:
+            class_map[vehicle_id] = cur_class
+            cur_class += 1
+    return image_paths, vehicle_ids, class_map
 
-            if vehicle_id not in class_map:
-                class_map[vehicle_id] = cur_class
-                cur_class+=1
-        return image_paths,vehicle_ids,class_map
 
-def get_veri776_test(veri_776_path, num_workers, batch_size, transform):
-    img_file_names, vehicle_ids, _ = parse_xml(os.path.join(veri_776_path, 'test_label.xml'))
+def get_veri776_test(
+    veri_776_path: str, num_workers: int, batch_size: int, transform
+) -> DataLoader:
+    """
+    Create a DataLoader for the Veri776 test dataset.
+
+    Args:
+        veri_776_path (str): Root directory of the Veri776 dataset.
+        num_workers (int): Number of worker processes.
+        batch_size (int): Batch size for the DataLoader.
+        transform: Transformations to be applied on the images.
+
+    Returns:
+        DataLoader: DataLoader for the test dataset.
+    """
+    xml_path = os.path.join(veri_776_path, "test_label.xml")
+    img_file_names, vehicle_ids, _ = parse_xml(xml_path)
     test_set = Veri776Test(img_file_names, vehicle_ids, transform, veri_776_path)
-    # return Veri776Test(img_file_names, vehicle_ids, transform, veri_776_path)
     return DataLoader(test_set, num_workers=num_workers, batch_size=batch_size, shuffle=False)
 
-def get_veri776_train(veri776_path, num_workers, batch_size, transform, drop_last=False, shuffle=False):
-    
-    img_paths, vehicle_ids, class_map = parse_xml(os.path.join(veri776_path, 'train_label.xml'))
-    # img_paths = [os.path.join(veri776_path, 'image_train', path) for path in img_paths]
-    train_set = Veri776Train(img_paths, vehicle_ids, class_map, transform,veri776_path)
 
+def get_veri776_train(
+    veri776_path: str,
+    num_workers: int,
+    batch_size: int,
+    transform,
+    drop_last: bool = False,
+    shuffle: bool = False,
+) -> DataLoader:
+    """
+    Create a DataLoader for the Veri776 training dataset.
 
-    return DataLoader(train_set, num_workers=num_workers, batch_size=batch_size, drop_last=drop_last, shuffle=shuffle)
+    Args:
+        veri776_path (str): Root directory of the Veri776 dataset.
+        num_workers (int): Number of worker processes.
+        batch_size (int): Batch size for the DataLoader.
+        transform: Transformations to be applied on the images.
+        drop_last (bool): Whether to drop the last incomplete batch.
+        shuffle (bool): Whether to shuffle the dataset.
+
+    Returns:
+        DataLoader: DataLoader for the training dataset.
+    """
+    xml_path = os.path.join(veri776_path, "train_label.xml")
+    img_paths, vehicle_ids, class_map = parse_xml(xml_path)
+    train_set = Veri776Train(img_paths, vehicle_ids, class_map, transform, veri776_path)
+    return DataLoader(
+        train_set,
+        num_workers=num_workers,
+        batch_size=batch_size,
+        drop_last=drop_last,
+        shuffle=shuffle,
+    )

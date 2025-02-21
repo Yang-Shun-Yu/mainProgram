@@ -12,96 +12,133 @@ from ultralytics import YOLO
 
 import ibnnet
 
-__all__ = ['make_model', 'IBN_A', 'resnet101_ibn_a', 'resnext101_ibn_a', 'densenet169_ibn_a',
+__all__ = ['make_model', 'CNN_IBN', 'resnet101_ibn_a', 'resnext101_ibn_a', 'densenet169_ibn_a',
             'se_resnet101_ibn_a', 'swin_reid', 'resnet34_ibn_a']
 
-def weights_init_kaiming(m):
+def weights_init_kaiming(m: nn.Module) -> None:
+    """
+    Initialize weights using Kaiming normalization.
+    
+    Args:
+        m (nn.Module): A module whose weights need initialization.
+    """
     classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
-        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_out')
-        nn.init.constant_(m.bias, 0.0)
-    elif classname.find('Conv') != -1:
-        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in')
+    if "Linear" in classname:
+        nn.init.kaiming_normal_(m.weight, a=0, mode="fan_out")
         if m.bias is not None:
             nn.init.constant_(m.bias, 0.0)
-    elif classname.find('BatchNorm') != -1:
+    elif "Conv" in classname:
+        nn.init.kaiming_normal_(m.weight, a=0, mode="fan_in")
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0.0)
+    elif "BatchNorm" in classname:
         if m.affine:
             nn.init.constant_(m.weight, 1.0)
             nn.init.constant_(m.bias, 0.0)
 
 
-def weights_init_classifier(m):
+def weights_init_classifier(m: nn.Module) -> None:
+    """
+    Initialize classifier weights.
+    
+    Args:
+        m (nn.Module): A module (typically Linear) for which weights need initialization.
+    """
     classname = m.__class__.__name__
-    if classname.find('Linear') != -1:
+    if "Linear" in classname:
         nn.init.normal_(m.weight, std=0.001)
-        if m.bias:
+        if m.bias is not None:
             nn.init.constant_(m.bias, 0.0)
 
-def get_backbone(backbone, pretrained):
+def get_backbone(backbone: str, pretrained: bool) -> nn.Module:
+    """
+    Retrieve the backbone model based on the specified type.
     
-    # assert backbone in ['resnet_a','resnet_b','resnet', 'resnext', 'seresnet', 'densenet', 
-    #                     'resnet34','resnext_b','seresnet_b'], "no such backbone, we only support ['resnet', 'resnext', 'seresnet', 'densenet', 'resnet34]"
+    Args:
+        backbone (str): The backbone model identifier.
+        pretrained (bool): Whether to load pretrained weights.
     
-
-
-    # if backbone == 'resnet':
-    #     return torch.hub.load('XingangPan/IBN-Net', 'resnet101_ibn_a', pretrained=pretrained)
-        # return ibnnet.resnet101_ibn_a(pretrained=False)
-    if backbone == 'resnet_a':
-        return torch.hub.load('XingangPan/IBN-Net', 'resnet101_ibn_a', pretrained=pretrained)
-        return ibnnet.resnet101_ibn_a(pretrained=False)
+    Returns:
+        nn.Module: The backbone model.
     
-    if backbone == 'resnet_b':
-        return torch.hub.load('XingangPan/IBN-Net', 'resnet101_ibn_b', pretrained=pretrained)
-        return ibnnet.resnet101_ibn_b(pretrained=False)
-    
-    if backbone == 'resnext_a':
-        return torch.hub.load('XingangPan/IBN-Net', 'resnext101_ibn_a', pretrained=pretrained)
-        return ibnnet.resnext101_ibn_a(pretrained=False)
-
-    if backbone == 'seresnet_a':
-        return torch.hub.load('XingangPan/IBN-Net', 'se_resnet101_ibn_a', pretrained=pretrained)
-        return ibnnet.se_resnet101_ibn_a(pretrained=False)
-
-    if backbone == 'resnet34':
-        return torch.hub.load('XingangPan/IBN-Net', 'resnet34_ibn_a', pretrained=pretrained)
-    
-    if backbone == 'resnext_b':
+    Raises:
+        ValueError: If the backbone type is not supported.
+    """
+    if backbone == "resnet_a":
+        return torch.hub.load("XingangPan/IBN-Net", "resnet101_ibn_a", pretrained=pretrained)
+    elif backbone == "resnet_b":
+        return torch.hub.load("XingangPan/IBN-Net", "resnet101_ibn_b", pretrained=pretrained)
+    elif backbone == "resnext_a":
+        return torch.hub.load("XingangPan/IBN-Net", "resnext101_ibn_a", pretrained=pretrained)
+    elif backbone == "seresnet_a":
+        return torch.hub.load("XingangPan/IBN-Net", "se_resnet101_ibn_a", pretrained=pretrained)
+    elif backbone == "resnet34":
+        return torch.hub.load("XingangPan/IBN-Net", "resnet34_ibn_a", pretrained=pretrained)
+    elif backbone == "resnext_b":
         return ibnnet.resnext101_ibn_b(pretrained=False)
-    
-    if backbone == 'seresnet_b':
+    elif backbone == "seresnet_b":
         return ibnnet.se_resnet101_ibn_b(pretrained=False)
-
-
-
-    if backbone == 'densenet':
+    elif backbone == "densenet":
         return DenseNet.densenet169_ibn_a(pretrained=pretrained)
+    else:
+        raise ValueError(f"Unsupported backbone: {backbone}")
     
-class IBN_A(nn.Module):
+class CNN_IBN(nn.Module):
+    """
+    CNN model with an IBN backbone for re-identification tasks.
+
+    Attributes:
+        backbone (nn.Module): The backbone model.
+        bottleneck (nn.BatchNorm1d): Batch normalization layer for embedding.
+        classifier (nn.Linear): Classification layer.
+    """
+
     def __init__(self, backbone, pretrained=True, num_classes=576, embedding_dim=2048):
-        super().__init__()
+        """
+        Initialize the CNN_IBN model.
+
+        Args:
+            backbone (str): Identifier of the backbone model.
+            pretrained (bool): Whether to load pretrained weights.
+            num_classes (int): Number of classes for the classifier.
+            embedding_dim (int): Dimensionality of the embedding space.
+        """
+        super(CNN_IBN, self).__init__()
         self.backbone = get_backbone(backbone, pretrained=pretrained)
 
-        # the expected embedding space is \mathbb{R}^{2048}. resnet, seresnet, resnext satisfy this automatically
-        if backbone == 'densenet':
-            self.backbone.classifier = nn.Linear(self.backbone.classifier.in_features, embedding_dim)
-        elif backbone == 'resnet34':
-            self.backbone.fc = nn.Linear(self.backbone.fc.in_features , embedding_dim)
-
+        # Adjust the final layer based on the backbone type
+        if backbone == "densenet":
+            self.backbone.classifier = nn.Linear(
+                self.backbone.classifier.in_features, embedding_dim
+            )
+        elif backbone == "resnet34":
+            self.backbone.fc = nn.Linear(
+                self.backbone.fc.in_features, embedding_dim
+            )
         else:
-            self.backbone.fc = nn.Identity() # pretend the last layer does not exist
-
+            # For other backbones, remove the final fully connected layer
+            self.backbone.fc = nn.Identity()
 
         self.bottleneck = nn.BatchNorm1d(embedding_dim)
-        self.bottleneck.bias.requires_grad_(False)  # no shift
+        # Freeze the bias of the batch norm layer
+        self.bottleneck.bias.requires_grad_(False)
 
         self.classifier = nn.Linear(embedding_dim, num_classes, bias=False)
 
+        # Initialize layers
         self.bottleneck.apply(weights_init_kaiming)
         self.classifier.apply(weights_init_classifier)
 
+    def forward(self, x: torch.Tensor):
+        """
+        Forward pass of the CNN_IBN model.
 
-    def forward(self, x):
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            tuple: (features, normalized_features, classifier_output)
+        """
         f_t = self.backbone(x) # features for triplet loss
         f_i = self.bottleneck(f_t) # features for inference
 
@@ -110,8 +147,24 @@ class IBN_A(nn.Module):
         return f_t, f_i, out
     
 class SwinReID(nn.Module):
+    """
+    Swin Transformer-based model for re-identification tasks.
+
+    Attributes:
+        swin (nn.Module): Swin Transformer backbone.
+        bottleneck (nn.BatchNorm1d): Batch normalization layer for embedding.
+        classifier (nn.Linear): Classification layer.
+    """
     def __init__(self, num_classes, embedding_dim=2048, imagenet_weight=True):
         super().__init__()
+        """
+        Initialize the SwinReID model.
+
+        Args:
+            num_classes (int): Number of classes for the classifier.
+            embedding_dim (int): Dimensionality of the embedding space.
+            imagenet_weight (bool): Whether to load ImageNet-pretrained weights.
+        """
 
         self.swin = swin_b(weights=Swin_B_Weights.IMAGENET1K_V1 if imagenet_weight else None)
 
@@ -133,17 +186,35 @@ class SwinReID(nn.Module):
 
         return f_t, f_i, out
     
-def make_model(backbone, num_classes, embedding_dim=2048):
-    print(f'using {backbone} as backbone')
+def make_model(backbone: str, num_classes: int, embedding_dim: int = 2048) -> nn.Module:
+    """
+    Factory function to create a model based on the backbone type.
 
-    if backbone == 'swin':
-        return SwinReID(num_classes)
-    elif backbone == 'yolo':
-        return Yolo(num_classes)
-    elif backbone == 'yolo11':
-        return Yolo11(num_classes)
+    Args:
+        backbone (str): The backbone model identifier. Options include 'swin', 'yolo', 'yolo11',
+                        or IBN backbones.
+        num_classes (int): Number of classes for classification.
+        embedding_dim (int): Dimensionality of the embedding space.
+
+    Returns:
+        nn.Module: The constructed model.
+    """
+    print(f"Using {backbone} as backbone")
+
+    if backbone == "swin":
+        return SwinReID(num_classes=num_classes, embedding_dim=embedding_dim)
+    elif backbone == "yolo":
+        # Assuming you want to use the YOLO model imported above
+        return Model(num_classes=num_classes)
+    elif backbone == "yolo11":
+        # Placeholder: implement or import the Yolo11 model as needed
+        raise NotImplementedError("Yolo11 model is not implemented.")
     
-    return IBN_A(backbone, num_classes, embedding_dim=embedding_dim)
+    # For other IBN backbones, use the CNN_IBN model
+    return CNN_IBN(
+        backbone=backbone, pretrained=True,
+        num_classes=num_classes, embedding_dim=embedding_dim
+    )
 
 
 # this class is kept for compatibility issue run3, run4 and rerun use this class 

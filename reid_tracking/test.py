@@ -604,7 +604,8 @@ def main():
         print(f"{i:<5} | "
               f"{true_positions[i]!s:>15} | "
               f"{measurements[i]!s:>15} | "
-              f"{updated_pos!s:>15}")
+              f"{pred_pos!s:>15}  | " 
+              f"{updated_pos}" )
 
 if __name__ == "__main__":
     main()

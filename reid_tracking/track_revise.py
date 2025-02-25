@@ -351,18 +351,468 @@ def merge_storages(storage_forward, storage_reverse):
     return merge_storage
 
 
+# def process_label_features(label_to_feature_map, single_thresholds, buffer_size=5, id_counter_start=1):
+#     """
+#     Process a mapping of labels to feature objects, assigning tracking IDs using a buffer.
+    
+#     Args:
+#         label_to_feature_map (dict): Mapping of label_path to list of feature objects.
+#         single_thresholds (dict): Dictionary of thresholds keyed by time_range and cam_id.
+#         buffer_size (int): Maximum number of frames to keep in the buffer.
+#         id_counter_start (int): Initial ID to assign.
+        
+#     Returns:
+#         storage (defaultdict): Storage dictionary with assigned IDs.
+#     """
+#     storage = defaultdict(list)
+#     buffer = OrderedDefaultdict(list)
+#     id_counter = id_counter_start
+#     old_cam = None
+#     first_frame = True
+#     old_time_range = None
+
+#     for label_path, objects in label_to_feature_map.items():
+#         # Extract time_range and camera id from label_path
+#         time_range = "_".join(os.path.basename(os.path.dirname(label_path)).split('_')[1:])
+#         # time_range = os.path.basename(os.path.dirname(label_path))
+
+#         cam_id = os.path.basename(label_path).split('_')[0]
+
+#         # Reset buffer if camera changes
+#         if old_time_range is None:
+#             old_time_range = time_range
+#         elif old_time_range != time_range:
+#             id_counter = 1
+#             old_time_range = time_range
+
+#         if old_cam is None:
+#             old_cam = cam_id
+#         elif old_cam != cam_id:
+#             while buffer:
+#                 save_buffer_to_storage(buffer, storage)
+#             # id_counter = 1
+#             old_cam = cam_id
+#             first_frame = True
+
+#         # Flush buffer if size exceeded
+#         if len(buffer) > buffer_size:
+#             save_buffer_to_storage(buffer, storage)
+
+#         # If no objects found, add a dummy entry
+#         if objects == [[]]:
+#             buffer[label_path].append((None, None, None, None, None, None))
+#             continue
+
+#         temp_assignments = []
+#         for obj in objects:
+#             feature = obj["feature"]
+#             center_x = obj["center_x_ratio"]
+#             center_y = obj["center_y_ratio"]
+#             assigned_id = None
+#             disp_x = None
+#             disp_y = None
+
+#             if first_frame:
+#                 assigned_id = id_counter
+#                 id_counter += 1
+#             else:
+#                 candidates = []
+#                 found = False
+#                 # Iterate over buffered frames in reverse order
+#                 for _, buf_feature_list in reversed(buffer.items()):
+#                     for buf_feature, buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buf_feature_list:
+#                         if buf_feature is not None:
+#                             sim = cosine_similarity(feature, buf_feature).squeeze()
+#                             if sim > single_thresholds[time_range][cam_id]:
+#                                 # Calculate angles (in radians) for the predicted displacement (buffer) and the actual displacement.
+#                                 # if buf_disp_x is not None and buf_disp_y is not None:
+                                
+#                                 #     angle_pred = math.atan2(buf_disp_y, buf_disp_x)
+#                                 #     angle_actual = math.atan2(center_y - buf_center_y, center_x - buf_center_x)
+#                                 #     # Compute the absolute difference between the angles.
+#                                 #     angle_diff = abs(angle_pred - angle_actual)
+#                                 #     # Normalize the angle difference to be within [0, pi]
+#                                 #     if angle_diff > math.pi:
+#                                 #         angle_diff = 2 * math.pi - angle_diff
+
+#                                 #     # Set an acceptable threshold (e.g., 60 degrees in radians).
+#                                 #     angle_threshold = math.radians(90)
+#                                 #     if angle_diff < angle_threshold:
+#                                 #         # Skip this candidate if the angle difference is too large.
+#                                 #         found = True
+#                                 #         candidates.append((buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y))
+#                                 # else:
+#                                 found = True
+#                                 candidates.append((buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y))
+
+                                    
+#                     # if previous frame match stop at this frame
+#                     if found:
+#                         break
+                
+                
+#                 if candidates:
+#                     # if candidates larger than 1 , we use the motion predition method to find out the matching id
+#                     if len(candidates) > 1:
+#                         min_distance = float("inf")
+#                         for cand in candidates:
+#                             cand_id, cand_center_x, cand_center_y, cand_disp_x, cand_disp_y = cand
+#                             if cand_disp_x is None or cand_disp_y is None:
+#                                 continue
+#                             # Check if the displacement direction is consistent
+#                             temp_disp = torch.tensor([center_x - cand_center_x, center_y - cand_center_y], dtype=torch.float32)
+#                             buf_disp = torch.tensor([cand_disp_x, cand_disp_y], dtype=torch.float32)
+#                             if torch.dot(temp_disp, buf_disp) < 0:
+#                                 continue
+#                             # Calculate angles (in radians) for the predicted displacement (buffer) and the actual displacement.
+#                             # angle_pred = math.atan2(cand_disp_y, cand_disp_x)
+#                             # angle_actual = math.atan2(center_y - cand_center_y, center_x - cand_center_x)
+
+#                             # # Compute the absolute difference between the angles.
+#                             # angle_diff = abs(angle_pred - angle_actual)
+#                             # # Normalize the angle difference to be within [0, pi]
+#                             # if angle_diff > math.pi:
+#                             #     angle_diff = 2 * math.pi - angle_diff
+
+#                             # # Set an acceptable threshold (e.g., 60 degrees in radians).
+#                             # angle_threshold = math.radians(60)
+
+#                             # if angle_diff > angle_threshold:
+#                             #     continue  # Skip this candidate if the angle difference is too large.
+#                             predict_x = cand_center_x + cand_disp_x
+#                             predict_y = cand_center_y + cand_disp_y
+#                             delta_x = center_x - predict_x
+#                             delta_y = center_y - predict_y
+#                             distance = math.sqrt(delta_x ** 2 + delta_y ** 2)
+#                             if distance < min_distance:
+#                                 assigned_id = cand_id
+#                                 min_distance = distance
+#                                 disp_x = center_x - cand_center_x
+#                                 disp_y = center_y - cand_center_y
+#                     # if we only have one candidate we just assign the matching id
+#                     elif len(candidates) == 1:
+#                         assigned_id = candidates[0][0]
+#                         disp_x = center_x - candidates[0][1]
+#                         disp_y = center_y - candidates[0][2]
+
+#                 # If still not assigned, try to find the closest feature based on displacement , use the motion prediction and lower the 
+#                 # threshold value to matching
+#                 if assigned_id is None:
+#                     _, buf_feature_list = next(reversed(buffer.items()))
+#                     min_distance = float("inf")
+#                     close_feature = None
+#                     for buf_feature, buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buf_feature_list:
+#                         if buf_disp_x is not None and buf_disp_y is not None:
+#                             temp_disp = torch.tensor([center_x - buf_center_x, center_y - buf_center_y], dtype=torch.float32)
+#                             buf_disp = torch.tensor([buf_disp_x, buf_disp_y], dtype=torch.float32)
+#                             # make sure the predivtion motion are align with the new car motion , example if we predit the car would move to 
+#                             # right , however the new car appera at the left , this must not be the candidate 
+#                             if torch.dot(temp_disp, buf_disp) < 0:
+#                                 continue
+
+#                             # angle_pred = math.atan2(buf_disp_y, buf_disp_x)
+#                             # angle_actual = math.atan2(center_y - buf_center_y, center_x - buf_center_x)
+
+#                             # # Compute the absolute difference between the angles.
+#                             # angle_diff = abs(angle_pred - angle_actual)
+#                             # # Normalize the angle difference to be within [0, pi]
+#                             # if angle_diff > math.pi:
+#                             #     angle_diff = 2 * math.pi - angle_diff
+
+#                             # # Set an acceptable threshold (e.g., 60 degrees in radians).
+#                             # angle_threshold = math.radians(90)
+
+#                             # if angle_diff > angle_threshold:
+#                             #     continue  # Skip this candidate if the angle difference is too large.
+
+#                             predict_x = buf_center_x + buf_disp_x
+#                             predict_y = buf_center_y + buf_disp_y
+#                             delta_x = center_x - predict_x
+#                             delta_y = center_y - predict_y
+#                             distance = math.sqrt(delta_x ** 2 + delta_y ** 2)
+#                             # find the most cloest prediction car 
+#                             if distance < min_distance:
+#                                 assigned_id = buf_id
+#                                 min_distance = distance
+#                                 disp_x = center_x - buf_center_x
+#                                 disp_y = center_y - buf_center_y
+#                                 close_feature = buf_feature
+#                     # Check similarity to decide if a new ID is needed
+#                     if assigned_id is None:
+#                         assigned_id = id_counter
+#                         id_counter += 1
+#                     else:
+#                         sim = cosine_similarity(feature, close_feature).squeeze()
+#                         # lower the threshold and compare again
+#                         if sim < single_thresholds[time_range][cam_id]/3:
+#                             assigned_id = id_counter
+#                             id_counter += 1
+
+#             temp_assignments.append((feature, assigned_id, center_x, center_y, disp_x, disp_y))
+
+#         # Resolve duplicates within the same frame
+#         temp_assignments, id_counter = resolve_duplicates(
+#             temp_assignments,
+#             buffer,
+#             single_thresholds[time_range][cam_id],
+#             time_range,
+#             cam_id,
+#             id_counter
+#         )
+#         first_frame = False
+#         buffer[label_path].extend(temp_assignments)
+
+#     # Flush remaining buffer entries to storage
+#     while buffer:
+#         save_buffer_to_storage(buffer, storage)
+#     return storage
+
+
+# def process_label_features(label_to_feature_map, single_thresholds, buffer_size=5, id_counter_start=1):
+#     """
+#     Process a mapping of labels to feature objects, assigning tracking IDs using a buffer.
+#     Logs predicted vehicle positions, true centers, displacement differences,
+#     Euclidean distance, and predicted position accuracy percentage (預測位置精確度 %).
+#     Also logs the overall average accuracy across all predictions.
+#     """
+#     storage = defaultdict(list)
+#     buffer = OrderedDefaultdict(list)
+#     id_counter = id_counter_start
+#     old_cam = None
+#     first_frame = True
+#     old_time_range = None
+
+#     # Set a maximum error threshold (this is an example value; adjust as needed)
+#     max_error = 0.2
+
+#     # ---- NEW: Keep track of accuracy sums and counts ----
+#     total_accuracy_sum = 0.0
+#     accuracy_count = 0
+
+#     for label_path, objects in label_to_feature_map.items():
+#         # Extract time_range and camera id from label_path
+#         time_range = "_".join(os.path.basename(os.path.dirname(label_path)).split('_')[1:])
+#         cam_id = os.path.basename(label_path).split('_')[0]
+
+#         # Reset buffer if camera or time changes
+#         if old_time_range is None:
+#             old_time_range = time_range
+#         elif old_time_range != time_range:
+#             id_counter = 1
+#             old_time_range = time_range
+
+#         if old_cam is None:
+#             old_cam = cam_id
+#         elif old_cam != cam_id:
+#             while buffer:
+#                 save_buffer_to_storage(buffer, storage)
+#             old_cam = cam_id
+#             first_frame = True
+
+#         # Flush buffer if size exceeded
+#         if len(buffer) > buffer_size:
+#             save_buffer_to_storage(buffer, storage)
+
+#         # If no objects found, add a dummy entry
+#         if objects == [[]]:
+#             buffer[label_path].append((None, None, None, None, None, None))
+#             continue
+
+#         temp_assignments = []
+#         for obj in objects:
+#             feature = obj["feature"]
+#             center_x = obj["center_x_ratio"]
+#             center_y = obj["center_y_ratio"]
+#             assigned_id = None
+#             disp_x = None
+#             disp_y = None
+#             position_accuracy = None  # We'll calculate this if/when relevant
+#             best_candidate = None
+
+#             if first_frame:
+#                 assigned_id = id_counter
+#                 id_counter += 1
+#             else:
+#                 candidates = []
+#                 found = False
+#                 # Iterate over buffered frames in reverse order
+#                 for _, buf_feature_list in reversed(buffer.items()):
+#                     for buf_feature, buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buf_feature_list:
+#                         if buf_feature is not None:
+#                             sim = cosine_similarity(feature, buf_feature).squeeze()
+#                             if sim > single_thresholds[time_range][cam_id]:
+#                                 found = True
+#                                 candidates.append((buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y))
+#                     if found:
+#                         break
+
+#                 # Case: Multiple candidates found; choose one with minimum distance
+#                 if candidates:
+#                     if len(candidates) > 1:
+#                         min_distance = float("inf")
+                        
+#                         for cand in candidates:
+#                             cand_id, cand_center_x, cand_center_y, cand_disp_x, cand_disp_y = cand
+#                             if cand_disp_x is None or cand_disp_y is None:
+#                                 continue
+#                             # Check if the displacement direction is consistent
+#                             temp_disp = torch.tensor([center_x - cand_center_x, center_y - cand_center_y], dtype=torch.float32)
+#                             buf_disp = torch.tensor([cand_disp_x, cand_disp_y], dtype=torch.float32)
+#                             if torch.dot(temp_disp, buf_disp) < 0:
+#                                 continue
+
+#                             predict_x = cand_center_x + cand_disp_x
+#                             predict_y = cand_center_y + cand_disp_y
+#                             delta_x = center_x - predict_x
+#                             delta_y = center_y - predict_y
+#                             distance = math.sqrt(delta_x**2 + delta_y**2)
+#                             if distance < min_distance:
+#                                 min_distance = distance
+#                                 assigned_id = cand_id
+#                                 disp_x = center_x - cand_center_x
+#                                 disp_y = center_y - cand_center_y
+#                                 best_candidate = (cand_center_x, cand_disp_x, cand_center_y, cand_disp_y)
+
+#                     # Case: Single candidate available
+#                     elif len(candidates) == 1:
+#                         cand = candidates[0]
+#                         assigned_id = cand[0]
+#                         disp_x = center_x - cand[1]
+#                         disp_y = center_y - cand[2]
+#                         cand_id, cand_center_x, cand_center_y, cand_disp_x, cand_disp_y = cand
+#                         best_candidate = (cand_center_x, cand_disp_x, cand_center_y, cand_disp_y)
+                        
+
+
+#                 # If still not assigned, try to find the closest feature using the buffered frame
+#                 if assigned_id is None:
+#                     _, buf_feature_list = next(reversed(buffer.items()))
+#                     min_distance = float("inf")
+#                     close_feature = None
+#                     for buf_feature, buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buf_feature_list:
+#                         if buf_disp_x is not None and buf_disp_y is not None:
+#                             temp_disp = torch.tensor([center_x - buf_center_x, center_y - buf_center_y], dtype=torch.float32)
+#                             buf_disp = torch.tensor([buf_disp_x, buf_disp_y], dtype=torch.float32)
+#                             # make sure the predivtion motion are align with the new car motion , example if we predit the car would move to 
+#                             # right , however the new car appera at the left , this must not be the candidate 
+#                             if torch.dot(temp_disp, buf_disp) < 0:
+#                                 continue
+#                             predict_x = buf_center_x + buf_disp_x
+#                             predict_y = buf_center_y + buf_disp_y
+#                             delta_x = center_x - predict_x
+#                             delta_y = center_y - predict_y
+#                             distance = math.sqrt(delta_x**2 + delta_y**2)
+#                             if distance < min_distance:
+#                                 min_distance = distance
+#                                 assigned_id = buf_id
+#                                 disp_x = center_x - buf_center_x
+#                                 disp_y = center_y - buf_center_y
+#                                 close_feature = buf_feature
+#                                 best_candidate = (buf_center_x, buf_disp_x, buf_center_y, buf_disp_y)
+
+
+#                     if assigned_id is None:
+#                         assigned_id = id_counter
+#                         id_counter += 1
+#                     else:
+#                         sim = cosine_similarity(feature, close_feature).squeeze()
+#                         if sim < single_thresholds[time_range][cam_id] / 3:
+#                             assigned_id = id_counter
+#                             id_counter += 1
+
+#             if best_candidate is not None and best_candidate[1] is not None:
+#                 pred_x = best_candidate[0] + best_candidate[1]
+#                 pred_y = best_candidate[2] + best_candidate[3]
+#                 # Calculate predicted position accuracy percentage
+#                 delta_x = center_x - pred_x
+#                 delta_y = center_y - pred_y
+#                 distance = math.sqrt(delta_x**2 + delta_y**2)
+
+#                 position_accuracy = max(0, min(100, (1 - (distance / max_error)) * 100))
+#                 logger.info(
+#                     "Label %s: Predicted vehicle position: (%.4f, %.4f), True center: (%.4f, %.4f), "
+#                     "Minimum disp_x: %.4f, Minimum disp_y: %.4f, Distance: %.4f, 預測位置精確度: %.2f%%", 
+#                     label_path, pred_x, pred_y, center_x, center_y, disp_x, disp_y, distance, position_accuracy
+#                 )
+#             # ---- NEW: Accumulate total accuracy if we computed one ----
+#             if position_accuracy is not None:
+#                 total_accuracy_sum += position_accuracy
+#                 accuracy_count += 1
+
+#             temp_assignments.append((feature, assigned_id, center_x, center_y, disp_x, disp_y))
+
+#         # Resolve duplicates within the same frame and update the buffer
+#         temp_assignments, id_counter = resolve_duplicates(
+#             temp_assignments,
+#             buffer,
+#             single_thresholds[time_range][cam_id],
+#             time_range,
+#             cam_id,
+#             id_counter
+#         )
+#         first_frame = False
+#         buffer[label_path].extend(temp_assignments)
+
+#     # Flush remaining buffer entries to storage
+#     while buffer:
+#         save_buffer_to_storage(buffer, storage)
+
+#     # ---- NEW: Log the average accuracy across all predicted frames ----
+#     if accuracy_count > 0:
+#         avg_accuracy = total_accuracy_sum / accuracy_count
+#         logger.info("Overall average position accuracy: %.2f%% (based on %d predictions)", avg_accuracy, accuracy_count)
+#     else:
+#         logger.info("No valid accuracy measurements were computed.")
+
+#     return storage
+
+import numpy as np
+# kalman filter method
+# =============================================================================
+# Kalman Filter Class for Motion Prediction
+# =============================================================================
+class KalmanFilter:
+    """
+    Simple Kalman filter for tracking vehicle positions.
+    State vector: [x, y, vx, vy]
+    """
+    def __init__(self, dt=1, process_noise=1e-2, measurement_noise=1e-1):
+        self.dt = dt
+        self.x = np.zeros((4, 1))  # initial state
+        self.F = np.array([[1, 0, dt, 0],
+                           [0, 1, 0, dt],
+                           [0, 0, 1,  0],
+                           [0, 0, 0,  1]])
+        self.H = np.array([[1, 0, 0, 0],
+                           [0, 1, 0, 0]])
+        self.P = np.eye(4)
+        self.Q = process_noise * np.eye(4)
+        self.R = measurement_noise * np.eye(2)
+
+    def initialize(self, pos, velocity):
+        self.x[0:2] = np.array(pos).reshape((2,1))
+        self.x[2:4] = np.array(velocity).reshape((2,1))
+
+    def predict(self):
+        self.x = self.F @ self.x
+        self.P = self.F @ self.P @ self.F.T + self.Q
+        return self.x[0:2].flatten()
+
+    def update(self, measurement):
+        z = np.array(measurement).reshape((2,1))
+        y = z - self.H @ self.x
+        S = self.H @ self.P @ self.H.T + self.R
+        K = self.P @ self.H.T @ np.linalg.inv(S)
+        self.x = self.x + K @ y
+        self.P = (np.eye(4) - K @ self.H) @ self.P
+
+# =============================================================================
+# Revised process_label_features with Kalman Filter Integration
+# =============================================================================
 def process_label_features(label_to_feature_map, single_thresholds, buffer_size=5, id_counter_start=1):
     """
     Process a mapping of labels to feature objects, assigning tracking IDs using a buffer.
-    
-    Args:
-        label_to_feature_map (dict): Mapping of label_path to list of feature objects.
-        single_thresholds (dict): Dictionary of thresholds keyed by time_range and cam_id.
-        buffer_size (int): Maximum number of frames to keep in the buffer.
-        id_counter_start (int): Initial ID to assign.
-        
-    Returns:
-        storage (defaultdict): Storage dictionary with assigned IDs.
+    Uses a Kalman filter for motion prediction when a vehicle exhibits displacement.
     """
     storage = defaultdict(list)
     buffer = OrderedDefaultdict(list)
@@ -371,14 +821,19 @@ def process_label_features(label_to_feature_map, single_thresholds, buffer_size=
     first_frame = True
     old_time_range = None
 
+    max_error = 0.2
+
+    # NEW: Dictionary to hold Kalman filter instances for each vehicle ID
+    kalman_filters = {}
+
+    total_accuracy_sum = 0.0
+    accuracy_count = 0
+
     for label_path, objects in label_to_feature_map.items():
         # Extract time_range and camera id from label_path
         time_range = "_".join(os.path.basename(os.path.dirname(label_path)).split('_')[1:])
-        # time_range = os.path.basename(os.path.dirname(label_path))
-
         cam_id = os.path.basename(label_path).split('_')[0]
 
-        # Reset buffer if camera changes
         if old_time_range is None:
             old_time_range = time_range
         elif old_time_range != time_range:
@@ -390,15 +845,12 @@ def process_label_features(label_to_feature_map, single_thresholds, buffer_size=
         elif old_cam != cam_id:
             while buffer:
                 save_buffer_to_storage(buffer, storage)
-            # id_counter = 1
             old_cam = cam_id
             first_frame = True
 
-        # Flush buffer if size exceeded
         if len(buffer) > buffer_size:
             save_buffer_to_storage(buffer, storage)
 
-        # If no objects found, add a dummy entry
         if objects == [[]]:
             buffer[label_path].append((None, None, None, None, None, None))
             continue
@@ -411,6 +863,9 @@ def process_label_features(label_to_feature_map, single_thresholds, buffer_size=
             assigned_id = None
             disp_x = None
             disp_y = None
+            position_accuracy = None
+            true_kf = None
+            best_candidate = None
 
             if first_frame:
                 assigned_id = id_counter
@@ -424,39 +879,19 @@ def process_label_features(label_to_feature_map, single_thresholds, buffer_size=
                         if buf_feature is not None:
                             sim = cosine_similarity(feature, buf_feature).squeeze()
                             if sim > single_thresholds[time_range][cam_id]:
-                                # Calculate angles (in radians) for the predicted displacement (buffer) and the actual displacement.
-                                # if buf_disp_x is not None and buf_disp_y is not None:
-                                
-                                #     angle_pred = math.atan2(buf_disp_y, buf_disp_x)
-                                #     angle_actual = math.atan2(center_y - buf_center_y, center_x - buf_center_x)
-                                #     # Compute the absolute difference between the angles.
-                                #     angle_diff = abs(angle_pred - angle_actual)
-                                #     # Normalize the angle difference to be within [0, pi]
-                                #     if angle_diff > math.pi:
-                                #         angle_diff = 2 * math.pi - angle_diff
-
-                                #     # Set an acceptable threshold (e.g., 60 degrees in radians).
-                                #     angle_threshold = math.radians(90)
-                                #     if angle_diff < angle_threshold:
-                                #         # Skip this candidate if the angle difference is too large.
-                                #         found = True
-                                #         candidates.append((buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y))
-                                # else:
                                 found = True
                                 candidates.append((buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y))
-
-                                    
-                    # if previous frame match stop at this frame
                     if found:
                         break
-                
+
+                # Use Kalman filter prediction if multiple candidates are found
                 
                 if candidates:
-                    # if candidates larger than 1 , we use the motion predition method to find out the matching id
                     if len(candidates) > 1:
                         min_distance = float("inf")
                         for cand in candidates:
                             cand_id, cand_center_x, cand_center_y, cand_disp_x, cand_disp_y = cand
+                            # If displacement exists, apply/update Kalman filter prediction
                             if cand_disp_x is None or cand_disp_y is None:
                                 continue
                             # Check if the displacement direction is consistent
@@ -464,93 +899,120 @@ def process_label_features(label_to_feature_map, single_thresholds, buffer_size=
                             buf_disp = torch.tensor([cand_disp_x, cand_disp_y], dtype=torch.float32)
                             if torch.dot(temp_disp, buf_disp) < 0:
                                 continue
-                            # Calculate angles (in radians) for the predicted displacement (buffer) and the actual displacement.
-                            # angle_pred = math.atan2(cand_disp_y, cand_disp_x)
-                            # angle_actual = math.atan2(center_y - cand_center_y, center_x - cand_center_x)
-
-                            # # Compute the absolute difference between the angles.
-                            # angle_diff = abs(angle_pred - angle_actual)
-                            # # Normalize the angle difference to be within [0, pi]
-                            # if angle_diff > math.pi:
-                            #     angle_diff = 2 * math.pi - angle_diff
-
-                            # # Set an acceptable threshold (e.g., 60 degrees in radians).
-                            # angle_threshold = math.radians(60)
-
-                            # if angle_diff > angle_threshold:
-                            #     continue  # Skip this candidate if the angle difference is too large.
-                            predict_x = cand_center_x + cand_disp_x
-                            predict_y = cand_center_y + cand_disp_y
+                            if cand_id not in kalman_filters:
+                                kf = KalmanFilter(dt=1)
+                                initial_velocity = (cand_disp_x, cand_disp_y)
+                                kf.initialize((cand_center_x, cand_center_y), initial_velocity)
+                                kalman_filters[cand_id] = kf
+                            else:
+                                kf = kalman_filters[cand_id]
+                            pred = kf.predict()
+                            predict_x, predict_y = pred[0], pred[1]
+        
                             delta_x = center_x - predict_x
                             delta_y = center_y - predict_y
-                            distance = math.sqrt(delta_x ** 2 + delta_y ** 2)
+                            distance = math.sqrt(delta_x**2 + delta_y**2)
                             if distance < min_distance:
-                                assigned_id = cand_id
+                                true_kf = kf
                                 min_distance = distance
+                                assigned_id = cand_id
                                 disp_x = center_x - cand_center_x
                                 disp_y = center_y - cand_center_y
-                    # if we only have one candidate we just assign the matching id
+                                best_candidate = (cand_center_x, predict_x, cand_center_y, predict_y)
+   
+                    # Single candidate: similar Kalman filter integration
                     elif len(candidates) == 1:
-                        assigned_id = candidates[0][0]
-                        disp_x = center_x - candidates[0][1]
-                        disp_y = center_y - candidates[0][2]
+                        cand = candidates[0]
+                        cand_id, cand_center_x, cand_center_y, cand_disp_x, cand_disp_y = cand
+                        assigned_id = cand_id
+                        disp_x = center_x - cand_center_x
+                        disp_y = center_y - cand_center_y
+                        if cand_disp_x is not None and cand_disp_y is not None:
+                            if cand_id not in kalman_filters:
+                                kf = KalmanFilter(dt=1)
+                                initial_velocity = (cand_disp_x, cand_disp_y)
+                                kf.initialize((cand_center_x, cand_center_y), initial_velocity)
+                                kalman_filters[cand_id] = kf
+                            else:
+                                kf = kalman_filters[cand_id]
+                            pred = kf.predict()
+                            pred_x, pred_y = pred[0], pred[1]
+                            true_kf = kf
+                            best_candidate = (cand_center_x, pred_x, cand_center_y, pred_y)
 
-                # If still not assigned, try to find the closest feature based on displacement , use the motion prediction and lower the 
-                # threshold value to matching
+
+
+                # If no candidate was matched, fall back to a simple buffer search
                 if assigned_id is None:
                     _, buf_feature_list = next(reversed(buffer.items()))
                     min_distance = float("inf")
                     close_feature = None
+
                     for buf_feature, buf_id, buf_center_x, buf_center_y, buf_disp_x, buf_disp_y in buf_feature_list:
                         if buf_disp_x is not None and buf_disp_y is not None:
+
                             temp_disp = torch.tensor([center_x - buf_center_x, center_y - buf_center_y], dtype=torch.float32)
                             buf_disp = torch.tensor([buf_disp_x, buf_disp_y], dtype=torch.float32)
                             # make sure the predivtion motion are align with the new car motion , example if we predit the car would move to 
                             # right , however the new car appera at the left , this must not be the candidate 
                             if torch.dot(temp_disp, buf_disp) < 0:
                                 continue
+                            if buf_id not in kalman_filters:
+                                kf = KalmanFilter(dt=1)
+                                initial_velocity = (buf_disp_x, buf_disp_y)
+                                kf.initialize((buf_center_x, buf_center_y), initial_velocity)
+                                kalman_filters[buf_id] = kf
+                            else:
+                                kf = kalman_filters[buf_id]
+                            pred = kf.predict()
+                            predict_x, predict_y = pred[0], pred[1]
 
-                            # angle_pred = math.atan2(buf_disp_y, buf_disp_x)
-                            # angle_actual = math.atan2(center_y - buf_center_y, center_x - buf_center_x)
-
-                            # # Compute the absolute difference between the angles.
-                            # angle_diff = abs(angle_pred - angle_actual)
-                            # # Normalize the angle difference to be within [0, pi]
-                            # if angle_diff > math.pi:
-                            #     angle_diff = 2 * math.pi - angle_diff
-
-                            # # Set an acceptable threshold (e.g., 60 degrees in radians).
-                            # angle_threshold = math.radians(90)
-
-                            # if angle_diff > angle_threshold:
-                            #     continue  # Skip this candidate if the angle difference is too large.
-
-                            predict_x = buf_center_x + buf_disp_x
-                            predict_y = buf_center_y + buf_disp_y
                             delta_x = center_x - predict_x
                             delta_y = center_y - predict_y
-                            distance = math.sqrt(delta_x ** 2 + delta_y ** 2)
-                            # find the most cloest prediction car 
+                            distance = math.sqrt(delta_x**2 + delta_y**2)
                             if distance < min_distance:
-                                assigned_id = buf_id
+                                true_kf = kf
                                 min_distance = distance
+                                assigned_id = buf_id
                                 disp_x = center_x - buf_center_x
                                 disp_y = center_y - buf_center_y
                                 close_feature = buf_feature
-                    # Check similarity to decide if a new ID is needed
+                                best_candidate = (cand_center_x, predict_x, cand_center_y, predict_y)
+
                     if assigned_id is None:
                         assigned_id = id_counter
                         id_counter += 1
                     else:
                         sim = cosine_similarity(feature, close_feature).squeeze()
-                        # lower the threshold and compare again
-                        if sim < single_thresholds[time_range][cam_id]/3:
+                        if sim < single_thresholds[time_range][cam_id] / 3:
                             assigned_id = id_counter
                             id_counter += 1
+                            true_kf = None
+                            best_candidate = None
+
+            if best_candidate is not None and best_candidate[1] is not None:
+                pred_x = best_candidate[1]
+                pred_y = best_candidate[3]
+                # Calculate predicted position accuracy percentage
+                delta_x = center_x - pred_x
+                delta_y = center_y - pred_y
+                distance = math.sqrt(delta_x**2 + delta_y**2)
+
+                position_accuracy = max(0, min(100, (1 - (distance / max_error)) * 100))
+                logger.info(
+                    "Label %s: Predicted vehicle position: (%.4f, %.4f), True center: (%.4f, %.4f), "
+                    "Minimum disp_x: %.4f, Minimum disp_y: %.4f, Distance: %.4f, 預測位置精確度: %.2f%%", 
+                    label_path, pred_x, pred_y, center_x, center_y, disp_x, disp_y, distance, position_accuracy
+                )
+            if true_kf is not None:
+                true_kf.update((center_x, center_y))
+
+            if position_accuracy is not None:
+                total_accuracy_sum += position_accuracy
+                accuracy_count += 1
 
             temp_assignments.append((feature, assigned_id, center_x, center_y, disp_x, disp_y))
 
-        # Resolve duplicates within the same frame
         temp_assignments, id_counter = resolve_duplicates(
             temp_assignments,
             buffer,
@@ -562,13 +1024,16 @@ def process_label_features(label_to_feature_map, single_thresholds, buffer_size=
         first_frame = False
         buffer[label_path].extend(temp_assignments)
 
-    # Flush remaining buffer entries to storage
     while buffer:
         save_buffer_to_storage(buffer, storage)
+    if accuracy_count > 0:
+        avg_accuracy = total_accuracy_sum / accuracy_count
+        logger.info("Overall average position accuracy: %.2f%% (based on %d predictions)", avg_accuracy, accuracy_count)
+    else:
+        logger.info("No valid accuracy measurements were computed.")
+
     return storage
 
-
-                        
 def multi_camera_mapping(merge_storage, all_camera_thresholds):
     """
     Merge multi-camera tracking results by mapping IDs across cameras per time.
@@ -605,6 +1070,7 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
     for file_path, entries in tqdm(merge_storage.items(), desc="Building clusters for multi-camera mapping"):
         if entries[0] == (None, None, None, None):
             continue
+
         parts = file_path.split(os.sep)
         if len(parts) < 2:
             continue
@@ -686,7 +1152,7 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
                             
                 # Decide the mapping id based on the similarity threshold
                 if best_similarity > all_camera_thresholds[time_range]*1.3:
-                    logger.debug("At time %s, comparing cluster %s and ref_cluster %s: sim=%.4f", time, cluster_id, best_mapping_id, best_similarity)
+                    # logger.debug("At time %s, comparing cluster %s and ref_cluster %s: sim=%.4f", time, cluster_id, best_mapping_id, best_similarity)
 
                     mapping_id = best_mapping_id
                 else:
@@ -731,7 +1197,7 @@ def multi_camera_mapping(merge_storage, all_camera_thresholds):
             # If a final mapping exists, use it; otherwise fallback to the original id.
             mapping_id = final_id_mapping[file_path].get(key, orig_id)
             final_multi_camera_storage[file_path].append((feature, mapping_id, center_x, center_y))
-            logger.debug("Final mapping for %s: orig_id %s -> mapping_id %s", file_path, orig_id, mapping_id)
+            # logger.debug("Final mapping for %s: orig_id %s -> mapping_id %s", file_path, orig_id, mapping_id)
 
     return final_multi_camera_storage
 
